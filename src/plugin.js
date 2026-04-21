@@ -15,8 +15,8 @@
 
 import { tool } from "@opencode-ai/plugin";
 import { runPrompt, runPromptBackground, getStatus } from "./bridge.mjs";
+import { AGENTS_DIR } from "./paths.mjs";
 import {
-  AGENTS_DIR,
   loadPresets,
   runPreset,
   runPresetBackground,
