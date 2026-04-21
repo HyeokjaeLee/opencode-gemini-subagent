@@ -1,0 +1,232 @@
+#!/usr/bin/env node
+import { getStatus, runInteractive, resetSandbox, ensureSandbox } from "../src/bridge.mjs";
+import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVersion } from "../src/installer.mjs";
+import { listTasks, inspectTask, cancelTask, readResult } from "../src/tasks.mjs";
+import { loadPresets } from "../src/presets.mjs";
+import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX } from "../src/paths.mjs";
+
+const args = process.argv.slice(2);
+const cmd = args[0] ?? "help";
+
+async function main() {
+  switch (cmd) {
+    case "status":
+      return cmdStatus();
+    case "auth":
+      return cmdAuth();
+    case "auth:reset":
+      return cmdAuthReset();
+    case "install":
+      return cmdInstall();
+    case "update":
+      return cmdUpdate();
+    case "tasks":
+      return cmdTasks();
+    case "mcp":
+      return cmdMcp();
+    case "doctor":
+      return cmdDoctor();
+    case "help":
+    default:
+      return cmdHelp();
+  }
+}
+
+async function cmdStatus() {
+  const s = await getStatus();
+  const { presets, errors } = await loadPresets();
+  const tasks = await listTasks();
+
+  console.log("OGS Status");
+  console.log("──────────");
+  console.log(`  ogs root:      ${s.ogsRoot}`);
+  console.log(`  sandbox:       ${s.sandbox} ${s.sandboxExists ? "✓" : "✗"}`);
+  console.log(`  gemini home:   ${s.geminiHome} ${s.geminiHomeExists ? "✓" : "✗"}`);
+  console.log(`  bin:           ${s.bin} ${s.binExists ? "✓" : "✗"}`);
+  console.log(`  cli version:   ${s.version ?? "(not installed)"}`);
+  console.log(`  npm version:   ${s.npmPackageVersion ?? "(not installed)"}`);
+  console.log(`  authenticated: ${s.authenticated ? "✓" : "✗"}`);
+  console.log(`  mcp servers:   ${s.mcpServers.length > 0 ? s.mcpServers.join(", ") : "(none)"}`);
+  console.log(`  presets:       ${presets.length} loaded`);
+  if (errors.length > 0) {
+    for (const e of errors) console.log(`    ⚠ ${e.file}: ${e.message}`);
+  }
+  console.log(`  tasks:         ${tasks.length} (${tasks.filter((t) => t.status === "running").length} running)`);
+  console.log(`  global ignored:${s.globalHomeIgnored}`);
+}
+
+async function cmdAuth() {
+  console.log("Launching Gemini OAuth in isolated sandbox...");
+  await ensureSandbox();
+  const res = await runInteractive(["auth"], { timeoutMs: 10 * 60_000 });
+  process.exit(res.exitCode);
+}
+
+async function cmdAuthReset() {
+  console.log("Resetting sandbox...");
+  await resetSandbox();
+  console.log("Sandbox reset. Run `ogs auth` to re-authenticate.");
+}
+
+async function cmdInstall() {
+  console.log("Installing @google/gemini-cli in", OGS_ROOT);
+  const version = install({ silent: false });
+  console.log(`Installed: ${version}`);
+}
+
+async function cmdUpdate() {
+  console.log("Checking for updates...");
+  const result = updateIfNeeded({ silent: false });
+  if (result.updated) {
+    console.log(`Updated: ${result.from ?? "(new)"} → ${result.to}`);
+  } else {
+    console.log(`Already up-to-date: ${result.to}`);
+  }
+}
+
+async function cmdTasks() {
+  const sub = args[1];
+  const tasks = await listTasks();
+
+  if (sub === "clean" || sub === "sweep") {
+    const { sweepOldTasks } = await import("../src/tasks.mjs");
+    const { swept } = await sweepOldTasks();
+    console.log(`Swept ${swept} old terminal tasks.`);
+    return;
+  }
+
+  if (tasks.length === 0) {
+    console.log("No tasks.");
+    return;
+  }
+
+  for (const t of tasks) {
+    const icon =
+      t.status === "running" ? "⏳" :
+      t.status === "completed" ? "✓" :
+      t.status === "failed" ? "✗" :
+      t.status === "cancelled" ? "⊘" :
+      t.status === "timeout" ? "⏱" : "?";
+    console.log(
+      `  ${icon} ${t.task_id}  ${t.status}  ${t.subagent ?? ""}  ${t.elapsed_ms != null ? t.elapsed_ms + "ms" : ""}`,
+    );
+  }
+}
+
+async function cmdMcp() {
+  const sub = args[1];
+  if (!sub) {
+    console.log("Usage: ogs mcp <list|add|remove> [args...]");
+    return;
+  }
+
+  if (sub === "list") {
+    await runInteractive(["mcp", "list"], { timeoutMs: 15_000 });
+  } else if (sub === "add") {
+    const name = args[2];
+    const url = args[3];
+    if (!name || !url) {
+      console.log("Usage: ogs mcp add <name> <url>");
+      return;
+    }
+    await runInteractive(["mcp", "add", "-n", name, url], { timeoutMs: 30_000 });
+  } else if (sub === "remove") {
+    const name = args[2];
+    if (!name) {
+      console.log("Usage: ogs mcp remove <name>");
+      return;
+    }
+    await runInteractive(["mcp", "remove", name], { timeoutMs: 15_000 });
+  } else {
+    console.log(`Unknown mcp subcommand: ${sub}`);
+  }
+}
+
+async function cmdDoctor() {
+  console.log("OGS Doctor");
+  console.log("─────────");
+
+  const checks = [];
+
+  checks.push(await check("Node binary", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const r = spawnSync("which", ["node"], { encoding: "utf8" });
+    const p = r.stdout?.trim();
+    if (!p) throw new Error("node not found in PATH");
+    return p;
+  }));
+
+  checks.push(await check("OGS root directory", async () => {
+    const { existsSync } = await import("node:fs");
+    if (!existsSync(OGS_ROOT)) throw new Error(`${OGS_ROOT} does not exist. Run: ogs install`);
+    return OGS_ROOT;
+  }));
+
+  checks.push(await check("Gemini CLI binary", async () => {
+    if (!isInstalled()) throw new Error(`${GEMINI_BIN} not found. Run: ogs install`);
+    return GEMINI_BIN;
+  }));
+
+  checks.push(await check("Gemini CLI version", async () => {
+    const current = getInstalledVersion();
+    const latest = getLatestVersion();
+    if (!current) throw new Error("Cannot determine installed version");
+    if (latest && current !== latest) return `${current} (latest: ${latest} — run: ogs update)`;
+    return `${current} (latest)`;
+  }));
+
+  checks.push(await check("Sandbox directory", async () => {
+    const { existsSync } = await import("node:fs");
+    if (!existsSync(GEMINI_SANDBOX)) throw new Error("Sandbox not initialized");
+    return GEMINI_SANDBOX;
+  }));
+
+  checks.push(await check("Authentication", async () => {
+    const s = await getStatus();
+    if (!s.authenticated) throw new Error("Not authenticated. Run: ogs auth");
+    return "authenticated";
+  }));
+
+  const passed = checks.filter((c) => c.ok).length;
+  const total = checks.length;
+  console.log(`\n${passed}/${total} checks passed.`);
+  if (passed < total) process.exit(1);
+}
+
+async function check(name, fn) {
+  try {
+    const detail = await fn();
+    console.log(`  ✓ ${name}: ${detail}`);
+    return { ok: true };
+  } catch (err) {
+    console.log(`  ✗ ${name}: ${err.message}`);
+    return { ok: false };
+  }
+}
+
+function cmdHelp() {
+  console.log(`ogs — opencode-gemini-subagent CLI
+
+Usage:
+  ogs <command> [args...]
+
+Commands:
+  status      Show installation, auth, MCP, preset, and task status
+  auth        Launch Gemini OAuth in the isolated sandbox
+  auth:reset  Reset the sandbox and clear credentials
+  install     Install @google/gemini-cli in ~/.ogs/
+  update      Check for and install Gemini CLI updates
+  tasks       List background tasks
+  tasks clean Sweep old terminal tasks (72h+)
+  mcp list    List MCP servers
+  mcp add     Add an MCP server: ogs mcp add <name> <url>
+  mcp remove  Remove an MCP server: ogs mcp remove <name>
+  doctor      Run diagnostic checks
+  help        Show this help
+`);
+}
+
+main().catch((err) => {
+  console.error(`ogs: ${err?.message ?? err}`);
+  process.exit(1);
+});

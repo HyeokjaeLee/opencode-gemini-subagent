@@ -1,0 +1,49 @@
+{
+  "name": "opencode-gemini-subagent",
+  "version": "0.1.0",
+  "description": "Delegate work to Gemini as an opencode subagent — built-in web search, background tasks, preset automation.",
+  "type": "module",
+  "main": "src/plugin.js",
+  "bin": {
+    "ogs": "bin/ogs.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "agents",
+    "scripts",
+    "postinstall.mjs"
+  ],
+  "scripts": {
+    "postinstall": "node postinstall.mjs",
+    "test": "node bin/ogs.js status"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "gemini",
+    "subagent",
+    "ai",
+    "llm"
+  ],
+  "author": "HyeokjaeLee",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HyeokjaeLee/opencode-gemini-subagent.git"
+  },
+  "dependencies": {
+    "yaml": "^2.7.1"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
