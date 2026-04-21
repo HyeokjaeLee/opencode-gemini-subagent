@@ -1,6 +1,11 @@
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { OGS_ROOT, GEMINI_BIN } from "./paths.mjs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { OGS_ROOT, GEMINI_BIN, AGENTS_DIR } from "./paths.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BUNDLED_AGENTS_DIR = path.join(__dirname, "..", "agents");
 
 const PACKAGE = "@google/gemini-cli";
 const UPDATE_CHECK_TTL_MS = 24 * 60 * 60_000;
@@ -89,6 +94,22 @@ export function install(opts = {}) {
   return getInstalledVersion();
 }
 
+export function syncBundledAgents() {
+  if (!existsSync(BUNDLED_AGENTS_DIR)) return { copied: 0 };
+  mkdirSync(AGENTS_DIR, { recursive: true });
+  let copied = 0;
+  for (const f of readdirSync(BUNDLED_AGENTS_DIR)) {
+    if (!f.endsWith(".md")) continue;
+    const src = path.join(BUNDLED_AGENTS_DIR, f);
+    const dst = path.join(AGENTS_DIR, f);
+    if (!existsSync(dst)) {
+      copyFileSync(src, dst);
+      copied++;
+    }
+  }
+  return { copied };
+}
+
 export function updateIfNeeded(opts = {}) {
   const current = getInstalledVersion();
   if (!current) {
@@ -119,6 +140,7 @@ export function updateIfNeeded(opts = {}) {
 }
 
 export function ensureInstalled(opts = {}) {
+  syncBundledAgents();
   if (!isInstalled()) {
     const version = install({ silent: opts.silent ?? true });
     return { bin: GEMINI_BIN, version };

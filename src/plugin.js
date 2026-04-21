@@ -13,7 +13,11 @@
  *   gemini_status   installation/auth/preset/task snapshot
  */
 
-import { tool } from "@opencode-ai/plugin";
+const { tool } = await import("@opencode-ai/plugin").catch(() => {
+  throw new Error(
+    "@opencode-ai/plugin not found. This plugin must be loaded from within opencode.",
+  );
+});
 import { runPrompt, runPromptBackground, getStatus } from "./bridge.mjs";
 import { AGENTS_DIR } from "./paths.mjs";
 import {

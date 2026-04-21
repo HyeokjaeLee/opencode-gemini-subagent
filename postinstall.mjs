@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-/**
- * postinstall: runs after npm install of opencode-gemini-subagent.
- * Prints a short setup guide. Does NOT auto-install Gemini CLI
- * (that would require interactive auth and might surprise the user).
- */
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pluginPath = resolve(__dirname, "src", "plugin.js");
 
 console.log(`
 ╭─────────────────────────────────────────────╮
@@ -21,11 +21,9 @@ First-time setup:
   3. Verify everything works:
      $ ogs doctor
 
-  4. Add to opencode.json:
+  4. Add to your opencode.json (use the path below):
      {
-       "plugin": {
-         "opencode-gemini-subagent": true
-       }
+       "plugin": ["${pluginPath}"]
      }
 
 CLI reference: ogs help
