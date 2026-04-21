@@ -30,7 +30,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HyeokjaeLee/opencode-gemini-subagent.git"
+    "url": "git+https://github.com/Nagle-Hyeokjae/opencode-gemini-subagent.git"
   },
   "dependencies": {
     "yaml": "^2.7.1"
