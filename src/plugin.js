@@ -69,6 +69,24 @@ function formatBgHandoff({ task_id }, subagent) {
   };
 }
 
+function buildPresetArgs(presetsByName) {
+  const presetArgs = {};
+  const seen = new Set();
+  for (const [, preset] of presetsByName) {
+    for (const spec of preset.args) {
+      if (seen.has(spec.name)) continue;
+      seen.add(spec.name);
+      presetArgs[spec.name] = tool.schema
+        .string()
+        .optional()
+        .describe(
+          `[preset:${preset.name}] ${spec.description ?? ""}${spec.required ? " (required)" : ""}`,
+        );
+    }
+  }
+  return presetArgs;
+}
+
 function buildGeminiTool(presetsByName) {
   const presetNames = Array.from(presetsByName.keys());
   const subagentList = [CONSULT, ...presetNames].join(", ");
@@ -137,6 +155,7 @@ function buildGeminiTool(presetsByName) {
         .string()
         .optional()
         .describe("Working directory. Defaults to the opencode session directory."),
+      ...buildPresetArgs(presetsByName),
     },
     async execute(args, ctx) {
       const subagent = (args.subagent ?? CONSULT).trim();

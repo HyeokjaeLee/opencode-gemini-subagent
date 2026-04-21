@@ -1,11 +1,26 @@
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { OGS_ROOT, GEMINI_BIN } from "./paths.mjs";
 
 const PACKAGE = "@google/gemini-cli";
 const UPDATE_CHECK_TTL_MS = 24 * 60 * 60_000;
+const UPDATE_CHECK_FILE = `${OGS_ROOT}/.last-update-check`;
 
-let lastUpdateCheck = 0;
+function getLastUpdateCheck() {
+  try {
+    if (existsSync(UPDATE_CHECK_FILE)) {
+      return Number(readFileSync(UPDATE_CHECK_FILE, "utf8").trim());
+    }
+  } catch {}
+  return 0;
+}
+
+function markUpdateCheck() {
+  try {
+    mkdirSync(OGS_ROOT, { recursive: true });
+    writeFileSync(UPDATE_CHECK_FILE, String(Date.now()), { mode: 0o644 });
+  } catch {}
+}
 
 export function getInstalledVersion() {
   try {
@@ -81,12 +96,12 @@ export function updateIfNeeded(opts = {}) {
     return { updated: true, from: null, to: version };
   }
 
-  if (Date.now() - lastUpdateCheck < UPDATE_CHECK_TTL_MS) {
+  if (Date.now() - getLastUpdateCheck() < UPDATE_CHECK_TTL_MS) {
     return { updated: false, from: current, to: current };
   }
 
   const latest = getLatestVersion();
-  lastUpdateCheck = Date.now();
+  markUpdateCheck();
 
   if (!latest || current === latest) {
     return { updated: false, from: current, to: latest ?? current };
