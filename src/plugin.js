@@ -219,11 +219,20 @@ function buildGeminiTool(presetsByName) {
   });
 }
 
+const MAX_RESULT_BYTES = 100 * 1024;
+
 function tailBytes(text, maxBytes = 4096) {
   if (!text) return "";
   const buf = Buffer.from(text, "utf8");
   if (buf.byteLength <= maxBytes) return text;
   return "…" + buf.subarray(buf.byteLength - maxBytes).toString("utf8");
+}
+
+function limitResult(text, maxBytes = MAX_RESULT_BYTES) {
+  if (!text) return "";
+  const buf = Buffer.from(text, "utf8");
+  if (buf.byteLength <= maxBytes) return text;
+  return buf.subarray(0, maxBytes).toString("utf8") + `\n\n... (truncated at ${maxBytes} bytes)`;
 }
 
 const geminiResultTool = tool({
@@ -272,7 +281,7 @@ const geminiResultTool = tool({
     if (terminal) {
       const result = await readResult(args.task_id);
       const stderr = await readStderr(args.task_id);
-      body = result ?? "";
+      body = limitResult(result ?? "");
       const header = `status: ${snap.status} | exit: ${snap.exit_code ?? "?"} | elapsed: ${snap.elapsed_ms ?? "?"}ms`;
       output = [header, "", body.trim() || "(empty stdout)"].join("\n");
       if (snap.status !== "completed") output += `\n\n---stderr---\n${tailBytes(stderr)}`;
