@@ -1,31 +1,23 @@
 /**
  * Skill loader for opencode skills.
- *
- * Reads SKILL.md files from the opencode skills directory and provides
- * them as formatted context for Gemini prompts.
+ * Reads SKILL.md files and provides them as context for Gemini prompts.
+ * Uses in-memory cache with TTL to avoid disk reads on every invocation.
  */
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { SKILLS_DIR } from "./paths.mjs";
 
-/**
- * @typedef {Object} SkillInfo
- * @property {string} name       Directory name (e.g. "typescript")
- * @property {string} filePath   Absolute path to SKILL.md
- * @property {string} content    Full markdown content
- * @property {string} [description]  Extracted from YAML frontmatter if present
- */
+const CACHE_TTL_MS = 5 * 60_000;
+const MAX_SKILL_BYTES = 4_096;
+const MAX_TOTAL_BYTES = 32_768;
 
-/**
- * Parse a simple YAML frontmatter to extract the description field.
- * Minimal parser — only handles flat key: value pairs.
- */
+let cachedSkills = null;
+let cachedAt = 0;
+
 function parseSimpleFrontmatter(raw) {
-  const desc = {
-    description: "",
-  };
+  const desc = { description: "" };
   if (!raw.startsWith("---")) return desc;
   const end = raw.indexOf("\n---", 3);
   if (end === -1) return desc;
@@ -40,13 +32,14 @@ function parseSimpleFrontmatter(raw) {
   return desc;
 }
 
-/**
- * Load all available skills. Returns array of SkillInfo objects.
- * Invalid or unreadable skills are silently skipped.
- *
- * @returns {Promise<SkillInfo[]>}
- */
+function truncateToBytes(text, maxBytes) {
+  const buf = Buffer.from(text, "utf8");
+  if (buf.byteLength <= maxBytes) return text;
+  return buf.subarray(0, maxBytes).toString("utf8") + "\n... (truncated)";
+}
+
 export async function loadSkills() {
+  if (cachedSkills && Date.now() - cachedAt < CACHE_TTL_MS) return cachedSkills;
   if (!existsSync(SKILLS_DIR)) return [];
 
   let entries;
@@ -70,20 +63,13 @@ export async function loadSkills() {
         content,
         description: fm.description,
       });
-    } catch {
-      // Skip unreadable skills
-    }
+    } catch {}
   }
+  cachedSkills = skills;
+  cachedAt = Date.now();
   return skills;
 }
 
-/**
- * Format skills as a context block suitable for injection into a Gemini prompt.
- * Only includes skills matching the given names (or all if no filter).
- *
- * @param {{ include?: string[] }} [opts]
- * @returns {Promise<string>}
- */
 export async function formatSkillsContext(opts = {}) {
   const skills = await loadSkills();
   const filtered = opts.include?.length
@@ -92,26 +78,32 @@ export async function formatSkillsContext(opts = {}) {
 
   if (filtered.length === 0) return "";
 
-  const sections = filtered.map((s) => {
-    const header = `## Skill: ${s.name}`;
-    return `${header}\n\n${s.content.trim()}`;
-  });
+  let totalBytes = 0;
+  const sections = [];
+  for (const s of filtered) {
+    const truncated = truncateToBytes(s.content.trim(), MAX_SKILL_BYTES);
+    const section = `## Skill: ${s.name}\n\n${truncated}`;
+    const sectionBytes = Buffer.byteLength(section, "utf8");
+    if (totalBytes + sectionBytes > MAX_TOTAL_BYTES) break;
+    totalBytes += sectionBytes;
+    sections.push(section);
+  }
+
+  if (sections.length === 0) return "";
 
   return [
-    "# Available OpenCode Skills",
-    "",
-    "The following skills are available as reference. Use them to guide your work:",
+    "# Available OpenCode Skills (reference only — use when relevant)",
     "",
     ...sections,
   ].join("\n");
 }
 
-/**
- * Get a list of available skill names for tool descriptions.
- *
- * @returns {Promise<string[]>}
- */
 export async function listSkillNames() {
   const skills = await loadSkills();
   return skills.map((s) => s.name);
+}
+
+export function invalidateCache() {
+  cachedSkills = null;
+  cachedAt = 0;
 }
