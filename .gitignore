@@ -2,3 +2,4 @@ node_modules/
 .ogs-sandbox/
 *.log
 .DS_Store
+/opencode-gemini-subagent-*.tgz
