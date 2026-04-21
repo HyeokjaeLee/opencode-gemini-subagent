@@ -102,7 +102,9 @@ export function syncBundledAgents() {
     if (!f.endsWith(".md")) continue;
     const src = path.join(BUNDLED_AGENTS_DIR, f);
     const dst = path.join(AGENTS_DIR, f);
-    if (!existsSync(dst)) {
+    const srcContent = readFileSync(src, "utf8");
+    const dstContent = existsSync(dst) ? readFileSync(dst, "utf8") : null;
+    if (srcContent !== dstContent) {
       copyFileSync(src, dst);
       copied++;
     }

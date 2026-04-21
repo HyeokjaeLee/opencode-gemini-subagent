@@ -379,6 +379,9 @@ const geminiCancelTool = tool({
 });
 
 export const GeminiSubagentPlugin = async () => {
+  const { syncBundledAgents } = await import("./installer.mjs");
+  syncBundledAgents();
+
   const { presets, errors } = await loadPresets();
   if (errors.length > 0) {
     for (const e of errors) {
