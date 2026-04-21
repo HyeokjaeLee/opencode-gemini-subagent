@@ -39,18 +39,18 @@ const CONSULT = "consult";
 function formatSyncResult(result) {
   if (result.timedOut) {
     return {
-      output: `Gemini timed out.\n\nPartial stdout:\n${result.stdout}\n\nStderr:\n${result.stderr}`,
+      output: `Gemini timed out.\n\nPartial stdout:\n${limitResult(result.stdout)}\n\nStderr:\n${limitResult(result.stderr)}`,
       metadata: { timedOut: true },
     };
   }
   if (result.exitCode !== 0) {
     return {
-      output: `Gemini exited with code ${result.exitCode}.\n\nStdout:\n${result.stdout}\n\nStderr:\n${result.stderr}`,
+      output: `Gemini exited with code ${result.exitCode}.\n\nStdout:\n${limitResult(result.stdout)}\n\nStderr:\n${limitResult(result.stderr)}`,
       metadata: { exitCode: result.exitCode, failed: true },
     };
   }
   return {
-    output: result.stdout.trim() || "(empty response)",
+    output: limitResult(result.stdout).trim() || "(empty response)",
     metadata: { exitCode: 0 },
   };
 }
