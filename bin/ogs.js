@@ -174,34 +174,23 @@ async function cmdMcp() {
 
     const env = buildSandboxedEnv();
 
-    if (process.platform === "darwin") {
-      const pty = spawn("script", ["-q", "/dev/null", GEMINI_BIN], {
-        cwd: process.cwd(),
-        env,
-        stdio: ["pipe", "inherit", "inherit"],
-      });
+    const expectScript = [
+      `spawn ${GEMINI_BIN}`,
+      `sleep 3`,
+      `send "/mcp auth ${name}\\r"`,
+      `interact`,
+    ].join("\n");
 
-      await new Promise((r) => setTimeout(r, 3000));
-      pty.stdin.write(`/mcp auth ${name}\n`);
+    const child = spawn("expect", ["-c", expectScript], {
+      cwd: process.cwd(),
+      env,
+      stdio: "inherit",
+    });
 
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(true);
-        process.stdin.pipe(pty.stdin);
-        process.stdin.resume();
-      }
-
-      const exitCode = await new Promise((resolve) => {
-        pty.on("exit", (code) => resolve(code ?? 0));
-      });
-
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-      }
-      process.exit(exitCode);
-    } else {
-      await runInteractive([], { timeoutMs: 5 * 60_000 });
-    }
+    const exitCode = await new Promise((resolve) => {
+      child.on("exit", (code) => resolve(code ?? 0));
+    });
+    process.exit(exitCode);
   } else {
     console.log(`Unknown mcp subcommand: ${sub}`);
   }
