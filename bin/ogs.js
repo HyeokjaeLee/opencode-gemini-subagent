@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { getStatus, runInteractive, resetSandbox, ensureSandbox } from "../src/bridge.mjs";
+import { getStatus, runInteractive, resetSandbox, ensureSandbox, buildSandboxedEnv } from "../src/bridge.mjs";
 import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVersion } from "../src/installer.mjs";
 import { listTasks, inspectTask, cancelTask, readResult } from "../src/tasks.mjs";
 import { loadPresets } from "../src/presets.mjs";
@@ -166,13 +166,35 @@ async function cmdMcp() {
       console.log("Usage: ogs mcp auth <name>");
       return;
     }
-    console.log(`To authenticate MCP server "${name}", run this in your terminal:`);
-    console.log("");
-    console.log(`  HOME=${GEMINI_SANDBOX} ${GEMINI_BIN}`);
-    console.log(`  /mcp auth ${name}`);
-    console.log("");
-    console.log("A browser window will open for OAuth login.");
-    console.log("After authentication, type /quit to exit Gemini.");
+    const { spawn } = await import("node:child_process");
+    await ensureSandbox();
+
+    console.log(`Authenticating MCP server "${name}"...`);
+    console.log("A browser window will open for OAuth login.\n");
+
+    const child = spawn(GEMINI_BIN, [], {
+      cwd: process.cwd(),
+      env: buildSandboxedEnv(),
+      stdio: ["pipe", "inherit", "inherit"],
+    });
+
+    child.stdin.write(`/mcp auth ${name}\n`);
+
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+      process.stdin.pipe(child.stdin);
+      process.stdin.resume();
+    }
+
+    const exitCode = await new Promise((resolve) => {
+      child.on("exit", (code) => resolve(code ?? 0));
+    });
+
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+    }
+    process.exit(exitCode);
   } else {
     console.log(`Unknown mcp subcommand: ${sub}`);
   }
