@@ -11,12 +11,10 @@
     "src",
     "bin",
     "agents",
-    "scripts",
     "postinstall.mjs"
   ],
   "scripts": {
-    "postinstall": "node postinstall.mjs",
-    "test": "node scripts/test.mjs"
+    "postinstall": "node postinstall.mjs"
   },
   "keywords": [
     "opencode",

@@ -3,7 +3,9 @@ import { getStatus, runInteractive, resetSandbox, ensureSandbox } from "../src/b
 import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVersion } from "../src/installer.mjs";
 import { listTasks, inspectTask, cancelTask, readResult } from "../src/tasks.mjs";
 import { loadPresets } from "../src/presets.mjs";
-import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX } from "../src/paths.mjs";
+import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX, GEMINI_SETTINGS_PATH } from "../src/paths.mjs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import path from "node:path";
 
 const args = process.argv.slice(2);
 const cmd = args[0] ?? "help";
@@ -116,30 +118,77 @@ async function cmdTasks() {
 async function cmdMcp() {
   const sub = args[1];
   if (!sub) {
-    console.log("Usage: ogs mcp <list|add|remove> [args...]");
+    console.log("Usage: ogs mcp <list|add|remove|auth> [args...]");
     return;
   }
 
   if (sub === "list") {
-    await runInteractive(["mcp", "list"], { timeoutMs: 15_000 });
+    const settings = readSettings();
+    const servers = settings?.mcpServers ?? {};
+    const names = Object.keys(servers);
+    if (names.length === 0) {
+      console.log("No MCP servers configured.");
+    } else {
+      for (const [name, cfg] of Object.entries(servers)) {
+        const url = cfg.url ?? cfg.command ?? "";
+        const disabled = cfg.disabled ? " (disabled)" : "";
+        console.log(`  ${name}: ${url}${disabled}`);
+      }
+    }
   } else if (sub === "add") {
-    const name = args[2];
-    const url = args[3];
-    if (!name || !url) {
-      console.log("Usage: ogs mcp add <name> <url>");
+    const mcpArgs = args.slice(2);
+    if (mcpArgs.length < 2) {
+      console.log("Usage: ogs mcp add [options] <name> <commandOrUrl> [args...]");
+      console.log("");
+      console.log("Examples:");
+      console.log("  ogs mcp add --transport http figma https://mcp.figma.com/mcp");
+      console.log("  ogs mcp add figma --env FIGMA_API_KEY=figd_xxx -- npx -y figma-developer-mcp --stdio");
       return;
     }
-    await runInteractive(["mcp", "add", "-n", name, url], { timeoutMs: 30_000 });
+    await runInteractive(["mcp", "add", "--scope", "user", ...mcpArgs], { timeoutMs: 60_000 });
   } else if (sub === "remove") {
     const name = args[2];
     if (!name) {
       console.log("Usage: ogs mcp remove <name>");
       return;
     }
-    await runInteractive(["mcp", "remove", name], { timeoutMs: 15_000 });
+    const settings = readSettings();
+    if (!settings.mcpServers?.[name]) {
+      console.log(`MCP server "${name}" not found.`);
+      return;
+    }
+    delete settings.mcpServers[name];
+    writeSettings(settings);
+    console.log(`Removed MCP server: ${name}`);
+  } else if (sub === "auth") {
+    const name = args[2];
+    if (!name) {
+      console.log("Usage: ogs mcp auth <name>");
+      return;
+    }
+    console.log(`Launching interactive Gemini session to authenticate "${name}"...`);
+    console.log(`Inside Gemini, run: /mcp auth ${name}`);
+    console.log("");
+    await runInteractive([], { timeoutMs: 5 * 60_000 });
   } else {
     console.log(`Unknown mcp subcommand: ${sub}`);
   }
+}
+
+function readSettings() {
+  try {
+    if (existsSync(GEMINI_SETTINGS_PATH)) {
+      return JSON.parse(readFileSync(GEMINI_SETTINGS_PATH, "utf8"));
+    }
+  } catch {}
+  return { security: { auth: { selectedType: "oauth-personal" } }, mcpServers: {} };
+}
+
+function writeSettings(settings) {
+  if (!existsSync(GEMINI_SETTINGS_PATH)) {
+    mkdirSync(path.dirname(GEMINI_SETTINGS_PATH), { recursive: true });
+  }
+  writeFileSync(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 }
 
 async function cmdDoctor() {
@@ -219,8 +268,9 @@ Commands:
   tasks       List background tasks
   tasks clean Sweep old terminal tasks (72h+)
   mcp list    List MCP servers
-  mcp add     Add an MCP server: ogs mcp add <name> <url>
+  mcp add     Add an MCP server (passes args to gemini mcp add)
   mcp remove  Remove an MCP server: ogs mcp remove <name>
+  mcp auth    Authenticate an MCP server: ogs mcp auth <name>
   doctor      Run diagnostic checks
   help        Show this help
 `);
