@@ -219,6 +219,27 @@ export async function inspectTask(taskId) {
     if (!alive) orphaned = true;
   }
 
+  // Execution budget bookkeeping. `preset_timeout_ms` is the wrapper's hard
+  // kill budget (from spec.timeoutMs). These fields let callers distinguish
+  // the wait budget of gemini_result from the execution budget of the task.
+  let executionDeadlineAt = null;
+  let remainingExecutionMs = null;
+  if (startedAt && typeof state.timeout_ms === "number") {
+    const deadline = new Date(startedAt).getTime() + state.timeout_ms;
+    executionDeadlineAt = new Date(deadline).toISOString();
+    if (!isTerminal(state.status)) {
+      remainingExecutionMs = Math.max(0, deadline - Date.now());
+    }
+  }
+
+  // Advisory: scan stderr tail only for live tasks. Terminal tasks already
+  // have `timeout_cause` recorded by the wrapper if it was a timeout.
+  let retryState = null;
+  if (!isTerminal(state.status)) {
+    const tail = await readTail(path.join(dir, "stderr"), 8192);
+    retryState = detectRetryState(tail);
+  }
+
   return {
     task_id: taskId,
     status: state.status,
@@ -238,6 +259,12 @@ export async function inspectTask(taskId) {
     orphaned,
     result_path: state.result_path ?? null,
     preset_timeout_ms: state.timeout_ms ?? null,
+    execution_deadline_at: executionDeadlineAt,
+    remaining_execution_ms: remainingExecutionMs,
+    retry_state: retryState?.state ?? null,
+    retry_reason: retryState?.reason ?? null,
+    retry_wait_ms: retryState?.wait_ms ?? null,
+    timeout_cause: state.timeout_cause ?? null,
   };
 }
 
@@ -257,6 +284,74 @@ export async function readStderr(taskId) {
   const p = path.join(dir, "stderr");
   if (!existsSync(p)) return "";
   return await readFile(p, "utf8");
+}
+
+/**
+ * Read at most `maxBytes` from the end of a file. Used for cheap tail-scanning
+ * the stderr log for retry/rate-limit signals without loading the whole file.
+ */
+async function readTail(filePath, maxBytes) {
+  if (!existsSync(filePath)) return "";
+  try {
+    const s = await stat(filePath);
+    const size = s.size;
+    if (size === 0) return "";
+    if (size <= maxBytes) return await readFile(filePath, "utf8");
+    const fd = await (await import("node:fs/promises")).open(filePath, "r");
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      await fd.read(buf, 0, maxBytes, size - maxBytes);
+      return buf.toString("utf8");
+    } finally {
+      await fd.close();
+    }
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Advisory scan of a stderr tail for Gemini-CLI retry markers. Fail-open:
+ * returns null (no signal) rather than throwing. Never used to make lifecycle
+ * decisions — only to annotate the snapshot so callers can distinguish
+ * "dead" from "alive, retrying under rate limit".
+ */
+function detectRetryState(stderrTail) {
+  if (!stderrTail) return null;
+
+  const signals = [
+    { re: /model_capacity_exhausted/i, reason: "model_capacity_exhausted" },
+    { re: /ratelimitexceeded/i, reason: "rate_limit_exceeded" },
+    { re: /quota will reset after (\d+)s/i, reason: "quota_exhausted" },
+    { re: /status[:\s]+429/i, reason: "http_429" },
+    { re: /resource_exhausted/i, reason: "resource_exhausted" },
+  ];
+
+  let matched = null;
+  for (const sig of signals) {
+    const m = stderrTail.match(sig.re);
+    if (m) {
+      matched = { reason: sig.reason, match: m };
+      break;
+    }
+  }
+  if (!matched) return null;
+
+  // Look for the most recent "Retrying after <N>ms" or "reset after <N>s" hint
+  // in the tail. Both forms come from Gemini CLI's retry loop.
+  let waitMs = null;
+  const retryAfter = [...stderrTail.matchAll(/retrying after (\d+)ms/gi)].pop();
+  if (retryAfter) waitMs = Number(retryAfter[1]);
+  if (waitMs == null) {
+    const resetAfter = [...stderrTail.matchAll(/reset after (\d+)s/gi)].pop();
+    if (resetAfter) waitMs = Number(resetAfter[1]) * 1000;
+  }
+
+  return {
+    state: "rate_limited",
+    reason: matched.reason,
+    wait_ms: Number.isFinite(waitMs) ? waitMs : null,
+  };
 }
 
 /**

@@ -10,7 +10,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { createWriteStream, openSync, writeFileSync, readFileSync, renameSync, fsyncSync, closeSync, existsSync } from "node:fs";
+import { createWriteStream, openSync, writeFileSync, readFileSync, renameSync, fsyncSync, closeSync, existsSync, statSync, openSync as openSyncFs, readSync, closeSync as closeSyncFs } from "node:fs";
 import path from "node:path";
 
 const TERMINATION_GRACE_MS = 5_000;
@@ -46,6 +46,37 @@ function readJson(target) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+/**
+ * On timeout, read the tail of stderr and classify the cause. Used only for
+ * diagnostic annotation (timeout_cause); never drives lifecycle.
+ */
+function classifyTimeoutCause(stderrPath) {
+  try {
+    if (!existsSync(stderrPath)) return "unknown";
+    const s = statSync(stderrPath);
+    const size = s.size;
+    if (size === 0) return "silent";
+    const readBytes = Math.min(16384, size);
+    const buf = Buffer.alloc(readBytes);
+    const fd = openSyncFs(stderrPath, "r");
+    try {
+      readSync(fd, buf, 0, readBytes, size - readBytes);
+    } finally {
+      closeSyncFs(fd);
+    }
+    const tail = buf.toString("utf8");
+    if (/MODEL_CAPACITY_EXHAUSTED|rateLimitExceeded|quota will reset after|RESOURCE_EXHAUSTED|status[:\s]+429/i.test(tail)) {
+      return "rate_limit_backoff";
+    }
+    if (/ETIMEDOUT|ECONNRESET|ENOTFOUND|ECONNREFUSED/i.test(tail)) {
+      return "network_error";
+    }
+    return "no_progress";
+  } catch {
+    return "unknown";
+  }
 }
 
 function patchState(patch) {
@@ -145,6 +176,10 @@ child.on("close", (code, signal) => {
   else if (code === 0) status = "completed";
   else status = "failed";
 
+  // Advisory cause annotation for timeouts. Separate from the status so the
+  // terminal state machine (isTerminal()) stays unchanged.
+  const timeoutCause = timedOut ? classifyTimeoutCause(stderrPath) : null;
+
   patchState({
     status,
     exit_code: code,
@@ -155,6 +190,7 @@ child.on("close", (code, signal) => {
     result_path: resultPath,
     stdout_bytes: stdoutStream.bytesWritten,
     stderr_bytes: stderrStream.bytesWritten,
+    timeout_cause: timeoutCause,
   });
 
   process.exit(0);

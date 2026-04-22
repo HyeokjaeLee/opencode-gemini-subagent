@@ -1,5 +1,6 @@
 ---
 description: Strictly review a unified diff with Gemini in read-only plan mode. Focuses on security, correctness, and edge cases.
+model: gemini-3.1-flash-lite-preview
 approval_mode: plan
 output_format: text
 timeout_ms: 180000

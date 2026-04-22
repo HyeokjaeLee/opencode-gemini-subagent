@@ -6,9 +6,22 @@
  *
  * Gemini CLI is installed directly in ~/.ogs/ (no npx) with auto-updates.
  *
+ * Two distinct timeout budgets:
+ *   - Preset `timeout_ms` (frontmatter) = EXECUTION budget. Wrapper SIGTERMs
+ *     the gemini process when this elapses. Finalized status becomes "timeout"
+ *     with `timeout_cause` annotated (rate_limit_backoff | network_error |
+ *     no_progress | silent | unknown).
+ *   - `gemini_result({ timeout_ms })` = WAIT budget for a single polling call.
+ *     Does not affect the task itself. Missing the wait deadline returns
+ *     status="still_running"; the task continues under its own execution budget.
+ *
+ * Live (non-terminal) tasks also surface `retry_state`, `retry_reason`, and
+ * `retry_wait_ms` from stderr-tail heuristics when Gemini CLI is actively
+ * retrying a transient API error (429 rate limit, network, etc.).
+ *
  * Tool surface:
  *   gemini          single entry point; subagent="consult" (default) or a preset name
- *   gemini_result   poll/wait for a background task; timeout_ms optional (falls back to preset timeout)
+ *   gemini_result   poll/wait for a background task; exposes timeout_cause & retry_state
  *   gemini_cancel   SIGTERM → grace → SIGKILL a running task
  *   gemini_status   installation/auth/preset/task snapshot (includes example_call per preset)
  */
@@ -65,10 +78,11 @@ function formatBgHandoff({ task_id }, subagent) {
       `Background task launched.\n\n` +
       `task_id: ${task_id}\n` +
       `subagent: ${subagent}\n\n` +
-      `Poll or wait with gemini_result({ task_id, timeout_ms? }). ` +
-      `timeout_ms is optional — if omitted, falls back to the preset's configured timeout. ` +
-      `If the deadline hits before completion, the tool returns status="still_running" ` +
-      `with progress info rather than stalling.\n` +
+      `The task runs under its preset's execution budget (see gemini_status).\n` +
+      `Poll with gemini_result({ task_id, block?: true, timeout_ms? }). ` +
+      `timeout_ms here is the WAIT budget for this single poll, not the task's ` +
+      `execution budget. If the wait deadline hits first, you get ` +
+      `status="still_running" with progress info — the task keeps going.\n` +
       `Cancel with gemini_cancel({ task_id }).`,
     metadata: { task_id, subagent, backgrounded: true },
   };
@@ -278,11 +292,18 @@ function limitResult(text, maxBytes = MAX_RESULT_BYTES) {
 
 const geminiResultTool = tool({
   description:
-    "Retrieve the state/result of a background Gemini task. " +
-    "timeout_ms is optional — if omitted, the preset's timeout_ms (from frontmatter) is used, " +
-    'or 180000ms for consult mode. If block=true and the deadline hits before the task ' +
-    'finishes, the response comes back with status="still_running" and progress ' +
-    "info — this tool will NEVER stall silently. Use block=false to peek without waiting.",
+    "Retrieve the state/result of a background Gemini task.\n\n" +
+    "timeout_ms here is the WAIT BUDGET for this polling call — NOT the task's " +
+    "execution budget. The task itself runs under its own preset timeout_ms " +
+    "(see gemini_status). Omitting timeout_ms defaults to the preset's " +
+    "execution budget (or 180000ms for consult mode) as a convenience cap.\n\n" +
+    'If block=true and the wait deadline hits before the task finishes, the ' +
+    'response returns status="still_running" with progress info — this tool ' +
+    "NEVER stalls silently. Use block=false to peek without waiting.\n\n" +
+    "When a task ends with status=\"timeout\", the response includes " +
+    "`timeout_cause` (rate_limit_backoff | network_error | no_progress | silent | unknown) " +
+    "to explain why. Live tasks also expose `retry_state`, `retry_reason`, and " +
+    "`retry_wait_ms` when Gemini CLI is actively retrying an API error.",
   args: {
     task_id: tool.schema.string().min(1).describe('Task id returned by gemini(..., background: true).'),
     block: tool.schema
@@ -295,7 +316,7 @@ const geminiResultTool = tool({
       .min(100)
       .max(30 * 60_000)
       .optional()
-      .describe("Max time to spend here. If omitted, uses the preset's timeout_ms or 180000ms default."),
+      .describe("Wait budget for THIS polling call. Not the task's execution budget. Omit to default to preset timeout."),
     include_tail: tool.schema
       .boolean()
       .optional()
@@ -328,20 +349,46 @@ const geminiResultTool = tool({
       const result = await readResult(args.task_id);
       const stderr = await readStderr(args.task_id);
       body = limitResult(result ?? "");
-      const header = `status: ${snap.status} | exit: ${snap.exit_code ?? "?"} | elapsed: ${snap.elapsed_ms ?? "?"}ms`;
+      const headerBits = [
+        `status: ${snap.status}`,
+        `exit: ${snap.exit_code ?? "?"}`,
+        `elapsed: ${snap.elapsed_ms ?? "?"}ms`,
+      ];
+      if (snap.status === "timeout" && snap.timeout_cause) {
+        headerBits.push(`timeout_cause: ${snap.timeout_cause}`);
+      }
+      const header = headerBits.join(" | ");
       output = [header, "", body.trim() || "(empty stdout)"].join("\n");
+      if (snap.status === "timeout" && snap.timeout_cause === "rate_limit_backoff") {
+        output +=
+          "\n\nNOTE: The task hit its execution budget while Gemini CLI was retrying a " +
+          "transient rate limit (429). The model was working — it simply exceeded the per-minute " +
+          "request quota. Consider raising the preset's timeout_ms, reducing call concurrency, " +
+          "or retrying after a short delay.";
+      }
       if (snap.status !== "completed") output += `\n\n---stderr---\n${tailBytes(stderr)}`;
     } else {
       const reportedStatus = snap.orphaned ? "orphaned" : "still_running";
       metadata.status = reportedStatus;
+      const retryBits = [];
+      if (snap.retry_state) {
+        retryBits.push(
+          `retry_state: ${snap.retry_state} (${snap.retry_reason ?? "unknown"})` +
+            (snap.retry_wait_ms != null ? `, backing off ~${snap.retry_wait_ms}ms` : ""),
+        );
+      }
       const lines = [
         `status: ${reportedStatus}`,
         `task_id: ${args.task_id}`,
         `subagent: ${snap.subagent ?? "(unknown)"}`,
         `elapsed_ms: ${snap.elapsed_ms ?? "?"}`,
+        snap.remaining_execution_ms != null
+          ? `remaining_execution_ms: ${snap.remaining_execution_ms} (task kill budget; separate from this wait)`
+          : "",
         `stdout_bytes: ${snap.stdout_bytes ?? 0}`,
         `stderr_bytes: ${snap.stderr_bytes ?? 0}`,
-        snap.deadline_hit ? `NOTE: block deadline (${effectiveTimeoutMs}ms) hit before completion.` : "",
+        ...retryBits,
+        snap.deadline_hit ? `NOTE: wait deadline (${effectiveTimeoutMs}ms) hit before completion. Task is still running.` : "",
         snap.orphaned
           ? "WARNING: wrapper process is no longer alive. Task is orphaned; cancel or re-run."
           : "",
