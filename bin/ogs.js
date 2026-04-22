@@ -172,29 +172,36 @@ async function cmdMcp() {
     console.log(`Authenticating MCP server "${name}"...`);
     console.log("A browser window will open for OAuth login.\n");
 
-    const child = spawn(GEMINI_BIN, [], {
-      cwd: process.cwd(),
-      env: buildSandboxedEnv(),
-      stdio: ["pipe", "inherit", "inherit"],
-    });
+    const env = buildSandboxedEnv();
 
-    child.stdin.write(`/mcp auth ${name}\n`);
+    if (process.platform === "darwin") {
+      const pty = spawn("script", ["-q", "/dev/null", GEMINI_BIN], {
+        cwd: process.cwd(),
+        env,
+        stdio: ["pipe", "inherit", "inherit"],
+      });
 
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-      process.stdin.pipe(child.stdin);
-      process.stdin.resume();
+      await new Promise((r) => setTimeout(r, 3000));
+      pty.stdin.write(`/mcp auth ${name}\n`);
+
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+        process.stdin.pipe(pty.stdin);
+        process.stdin.resume();
+      }
+
+      const exitCode = await new Promise((resolve) => {
+        pty.on("exit", (code) => resolve(code ?? 0));
+      });
+
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+      }
+      process.exit(exitCode);
+    } else {
+      await runInteractive([], { timeoutMs: 5 * 60_000 });
     }
-
-    const exitCode = await new Promise((resolve) => {
-      child.on("exit", (code) => resolve(code ?? 0));
-    });
-
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-    }
-    process.exit(exitCode);
   } else {
     console.log(`Unknown mcp subcommand: ${sub}`);
   }
