@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { getStatus, runInteractive, resetSandbox, ensureSandbox, buildSandboxedEnv } from "../src/bridge.mjs";
+import { getStatus, runInteractive, resetSandbox, ensureSandbox } from "../src/bridge.mjs";
 import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVersion } from "../src/installer.mjs";
 import { listTasks, inspectTask, cancelTask, readResult } from "../src/tasks.mjs";
 import { loadPresets } from "../src/presets.mjs";
@@ -166,31 +166,10 @@ async function cmdMcp() {
       console.log("Usage: ogs mcp auth <name>");
       return;
     }
-    const { spawn } = await import("node:child_process");
-    await ensureSandbox();
-
-    console.log(`Authenticating MCP server "${name}"...`);
-    console.log("A browser window will open for OAuth login.\n");
-
-    const env = buildSandboxedEnv();
-
-    const expectScript = [
-      `spawn ${GEMINI_BIN}`,
-      `sleep 3`,
-      `send "/mcp auth ${name}\\r"`,
-      `interact`,
-    ].join("\n");
-
-    const child = spawn("expect", ["-c", expectScript], {
-      cwd: process.cwd(),
-      env,
-      stdio: "inherit",
-    });
-
-    const exitCode = await new Promise((resolve) => {
-      child.on("exit", (code) => resolve(code ?? 0));
-    });
-    process.exit(exitCode);
+    console.log(`Run the following to authenticate "${name}":\n`);
+    console.log(`  HOME=${GEMINI_SANDBOX} ${GEMINI_BIN}`);
+    console.log(`  /mcp auth ${name}\n`);
+    console.log("A browser will open. After login, type /quit.");
   } else {
     console.log(`Unknown mcp subcommand: ${sub}`);
   }
