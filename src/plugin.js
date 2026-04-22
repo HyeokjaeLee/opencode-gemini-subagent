@@ -65,9 +65,10 @@ function formatBgHandoff({ task_id }, subagent) {
       `Background task launched.\n\n` +
       `task_id: ${task_id}\n` +
       `subagent: ${subagent}\n\n` +
-      `Poll or wait with gemini_result({ task_id, timeout_ms }). ` +
-      `timeout_ms is REQUIRED — if the deadline hits before completion, the ` +
-      `tool returns status="still_running" with progress info rather than stalling.\n` +
+      `Poll or wait with gemini_result({ task_id, timeout_ms? }). ` +
+      `timeout_ms is optional — if omitted, falls back to the preset's configured timeout. ` +
+      `If the deadline hits before completion, the tool returns status="still_running" ` +
+      `with progress info rather than stalling.\n` +
       `Cancel with gemini_cancel({ task_id }).`,
     metadata: { task_id, subagent, backgrounded: true },
   };
