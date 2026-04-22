@@ -166,10 +166,13 @@ async function cmdMcp() {
       console.log("Usage: ogs mcp auth <name>");
       return;
     }
-    console.log(`Launching interactive Gemini session to authenticate "${name}"...`);
-    console.log(`Inside Gemini, run: /mcp auth ${name}`);
+    console.log(`To authenticate MCP server "${name}", run this in your terminal:`);
     console.log("");
-    await runInteractive([], { timeoutMs: 5 * 60_000 });
+    console.log(`  HOME=${GEMINI_SANDBOX} ${GEMINI_BIN}`);
+    console.log(`  /mcp auth ${name}`);
+    console.log("");
+    console.log("A browser window will open for OAuth login.");
+    console.log("After authentication, type /quit to exit Gemini.");
   } else {
     console.log(`Unknown mcp subcommand: ${sub}`);
   }
