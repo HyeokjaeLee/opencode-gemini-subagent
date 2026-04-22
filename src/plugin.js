@@ -17,7 +17,10 @@
  *
  * Live (non-terminal) tasks also surface `retry_state`, `retry_reason`, and
  * `retry_wait_ms` from stderr-tail heuristics when Gemini CLI is actively
- * retrying a transient API error (429 rate limit, network, etc.).
+ * retrying an API-side rate limit (HTTP 429, MODEL_CAPACITY_EXHAUSTED,
+ * rateLimitExceeded, quota reset hints). Other failure modes (network
+ * errors, etc.) are classified separately as `timeout_cause` only after
+ * the wrapper terminates the task, not via live retry_state.
  *
  * Tool surface:
  *   gemini          single entry point; subagent="consult" (default) or a preset name
