@@ -8,9 +8,9 @@
  *
  * Tool surface:
  *   gemini          single entry point; subagent="consult" (default) or a preset name
- *   gemini_result   poll/wait for a background task; timeout_ms REQUIRED (no silent stalls)
+ *   gemini_result   poll/wait for a background task; timeout_ms optional (falls back to preset timeout)
  *   gemini_cancel   SIGTERM → grace → SIGKILL a running task
- *   gemini_status   installation/auth/preset/task snapshot
+ *   gemini_status   installation/auth/preset/task snapshot (includes example_call per preset)
  */
 
 const { tool } = await import("@opencode-ai/plugin").catch(() => {
