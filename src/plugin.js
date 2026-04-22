@@ -73,6 +73,23 @@ function formatBgHandoff({ task_id }, subagent) {
   };
 }
 
+function buildExampleCall(preset) {
+  const argEntries = preset.args.map((spec) => {
+    const placeholder = spec.required
+      ? `"<${spec.name}>"`
+      : `"<${spec.name}?>"`;
+    return `  ${spec.name}: ${placeholder}`;
+  });
+  const lines = [
+    `gemini({`,
+    `  subagent: "${preset.name}",`,
+    ...argEntries,
+    `  background: false  // or true for long-running tasks`,
+    `})`,
+  ];
+  return lines.join("\n");
+}
+
 function buildPresetArgs(presetsByName) {
   const presetArgs = {};
   const seen = new Set();
@@ -261,7 +278,8 @@ function limitResult(text, maxBytes = MAX_RESULT_BYTES) {
 const geminiResultTool = tool({
   description:
     "Retrieve the state/result of a background Gemini task. " +
-    "timeout_ms is REQUIRED: if block=true and the deadline hits before the task " +
+    "timeout_ms is optional — if omitted, the preset's timeout_ms (from frontmatter) is used, " +
+    'or 180000ms for consult mode. If block=true and the deadline hits before the task ' +
     'finishes, the response comes back with status="still_running" and progress ' +
     "info — this tool will NEVER stall silently. Use block=false to peek without waiting.",
   args: {
@@ -275,7 +293,8 @@ const geminiResultTool = tool({
       .int()
       .min(100)
       .max(30 * 60_000)
-      .describe("REQUIRED. Max time to spend here. Even block=false honors this for the liveness check."),
+      .optional()
+      .describe("Max time to spend here. If omitted, uses the preset's timeout_ms or 180000ms default."),
     include_tail: tool.schema
       .boolean()
       .optional()
@@ -283,9 +302,12 @@ const geminiResultTool = tool({
   },
   async execute(args, ctx) {
     const block = args.block === true;
+    const snapPeek = await inspectTask(args.task_id);
+    const effectiveTimeoutMs = args.timeout_ms ?? snapPeek.preset_timeout_ms ?? 180_000;
+
     const snap = block
-      ? await waitForTask(args.task_id, args.timeout_ms)
-      : { ...(await inspectTask(args.task_id)), deadline_hit: false };
+      ? await waitForTask(args.task_id, effectiveTimeoutMs)
+      : { ...snapPeek, deadline_hit: false };
 
     if (snap.status === "unknown") {
       return {
@@ -318,7 +340,7 @@ const geminiResultTool = tool({
         `elapsed_ms: ${snap.elapsed_ms ?? "?"}`,
         `stdout_bytes: ${snap.stdout_bytes ?? 0}`,
         `stderr_bytes: ${snap.stderr_bytes ?? 0}`,
-        snap.deadline_hit ? `NOTE: block deadline (${args.timeout_ms}ms) hit before completion.` : "",
+        snap.deadline_hit ? `NOTE: block deadline (${effectiveTimeoutMs}ms) hit before completion.` : "",
         snap.orphaned
           ? "WARNING: wrapper process is no longer alive. Task is orphaned; cancel or re-run."
           : "",
@@ -402,6 +424,7 @@ export const GeminiSubagentPlugin = async () => {
     gemini_status: tool({
       description:
         "Report installation, auth, MCP, preset, and background task status of the isolated Gemini bridge. " +
+        "Use this to discover available presets, their args, and how to call them (via example_call). " +
         "Use this first if any gemini_* tool fails, to verify the sandbox is set up.",
       args: {},
       async execute(_args, ctx) {
@@ -411,10 +434,13 @@ export const GeminiSubagentPlugin = async () => {
           agentsDir: AGENTS_DIR,
           presets: presets.map((p) => ({
             name: p.name,
+            description: p.description,
             model: p.model,
             approvalMode: p.approvalMode,
+            timeoutMs: p.timeoutMs,
             args: p.args,
             filePath: p.filePath,
+            example_call: buildExampleCall(p),
           })),
           presetLoadErrors: errors,
           tasks,

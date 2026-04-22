@@ -237,6 +237,7 @@ export async function inspectTask(taskId) {
     cancelled: state.cancelled ?? false,
     orphaned,
     result_path: state.result_path ?? null,
+    preset_timeout_ms: state.timeout_ms ?? null,
   };
 }
 
