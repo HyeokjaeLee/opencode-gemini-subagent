@@ -7,7 +7,6 @@ import {
   GEMINI_SANDBOX,
   GEMINI_SETTINGS_PATH,
   GEMINI_GLOBAL_HOME,
-  NPM_CACHE_DIR,
   OGS_ROOT,
   assertNotGlobal,
 } from "./paths.js";
@@ -49,14 +48,11 @@ export function buildSandboxedEnv(extraEnv: Record<string, string> = {}): Record
   delete base.GOOGLE_APPLICATION_CREDENTIALS;
   base.HOME = GEMINI_SANDBOX;
   base.XDG_CONFIG_HOME = GEMINI_SANDBOX;
-  base.npm_config_cache = NPM_CACHE_DIR;
-  base.NPM_CONFIG_CACHE = NPM_CACHE_DIR;
   return { ...base, ...extraEnv };
 }
 
 export async function ensureSandbox(): Promise<void> {
   await mkdir(GEMINI_HOME, { recursive: true });
-  await mkdir(NPM_CACHE_DIR, { recursive: true });
 }
 
 export async function spawnGemini(argv: string[], opts: SpawnOpts = {}): Promise<RunResult> {
@@ -194,11 +190,10 @@ export interface GeminiStatus {
   geminiHome: string;
   geminiHomeExists: boolean;
   settingsPath: string;
-  npmCacheDir: string;
   bin: string;
   binExists: boolean;
   version: string | null;
-  npmPackageVersion: string | null;
+  packageVersion: string | null;
   authenticated: boolean;
   mcpServers: string[];
   globalHomeIgnored: string;
@@ -233,12 +228,12 @@ export async function getStatus(): Promise<GeminiStatus> {
     } catch (_e) { /* ignore */ }
   }
 
-  let npmVersion: string | null = null;
+  let pkgVersion: string | null = null;
   try {
     const pkgPath = `${OGS_ROOT}/node_modules/@google/gemini-cli/package.json`;
     if (existsSync(pkgPath)) {
       const raw = await Bun.file(pkgPath).text();
-      npmVersion = (JSON.parse(raw) as { version?: string }).version ?? null;
+      pkgVersion = (JSON.parse(raw) as { version?: string }).version ?? null;
     }
   } catch (_e) { /* ignore */ }
 
@@ -249,11 +244,10 @@ export async function getStatus(): Promise<GeminiStatus> {
     geminiHome: GEMINI_HOME,
     geminiHomeExists: existsSync(GEMINI_HOME),
     settingsPath: GEMINI_SETTINGS_PATH,
-    npmCacheDir: NPM_CACHE_DIR,
     bin: GEMINI_BIN,
     binExists,
     version,
-    npmPackageVersion: npmVersion,
+    packageVersion: pkgVersion,
     authenticated,
     mcpServers,
     globalHomeIgnored: GEMINI_GLOBAL_HOME,

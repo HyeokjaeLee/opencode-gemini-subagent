@@ -46,7 +46,7 @@ async function cmdStatus(): Promise<void> {
   console.log(`  gemini home:   ${s.geminiHome} ${s.geminiHomeExists ? "✓" : "✗"}`);
   console.log(`  bin:           ${s.bin} ${s.binExists ? "✓" : "✗"}`);
   console.log(`  cli version:   ${s.version ?? "(not installed)"}`);
-  console.log(`  npm version:   ${s.npmPackageVersion ?? "(not installed)"}`);
+  console.log(`  pkg version:   ${s.packageVersion ?? "(not installed)"}`);
   console.log(`  authenticated: ${s.authenticated ? "✓" : "✗"}`);
   console.log(`  mcp servers:   ${s.mcpServers.length > 0 ? s.mcpServers.join(", ") : "(none)"}`);
   console.log(`  presets:       ${presets.length} loaded`);

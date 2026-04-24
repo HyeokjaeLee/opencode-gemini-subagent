@@ -14,8 +14,6 @@ export const GEMINI_SANDBOX = path.join(OGS_ROOT, "sandbox");
 
 export const GEMINI_HOME = path.join(GEMINI_SANDBOX, ".gemini");
 
-export const NPM_CACHE_DIR = path.join(GEMINI_SANDBOX, ".npm-cache");
-
 export const GEMINI_SETTINGS_PATH = path.join(GEMINI_HOME, "settings.json");
 export const GEMINI_OAUTH_CREDS_PATH = path.join(GEMINI_HOME, "oauth_creds.json");
 
