@@ -35,15 +35,12 @@ export function getInstalledVersion(): string | null {
   }
 }
 
-export function getLatestVersion(): string | null {
+export async function getLatestVersion(): Promise<string | null> {
   try {
-    const result = Bun.spawnSync(["npm", "view", PACKAGE, "version"], {
-      cwd: OGS_ROOT,
-      env: Bun.env,
-    });
-    if (!result.success || !result.stdout) return null;
-    const out = new TextDecoder().decode(result.stdout).trim();
-    return out || null;
+    const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(PACKAGE)}/latest`);
+    if (!res.ok) return null;
+    const data = await res.json() as { version?: string };
+    return data.version ?? null;
   } catch (_e) {
     return null;
   }
@@ -78,7 +75,7 @@ export function install(opts: { silent?: boolean } = {}): string {
   const stdio: "inherit" | "ignore" = silent ? "ignore" : "inherit";
 
   const result = Bun.spawnSync(
-    ["npm", "install", "--prefix", OGS_ROOT, PACKAGE],
+    ["bun", "add", "--cwd", OGS_ROOT, PACKAGE],
     {
       stdio: ["ignore", stdio, stdio],
       env: Bun.env,
@@ -87,7 +84,7 @@ export function install(opts: { silent?: boolean } = {}): string {
   );
 
   if (!result.success) {
-    throw new Error(`npm install failed with exit code ${result.exitCode}`);
+    throw new Error(`bun add failed with exit code ${result.exitCode}`);
   }
 
   if (!existsSync(GEMINI_BIN)) {
@@ -112,7 +109,7 @@ export function syncBundledAgents(): { copied: number } {
   return { copied };
 }
 
-export function updateIfNeeded(opts: { silent?: boolean } = {}): { updated: boolean; from: string | null; to: string | null } {
+export async function updateIfNeeded(opts: { silent?: boolean } = {}): Promise<{ updated: boolean; from: string | null; to: string | null }> {
   const current = getInstalledVersion();
   if (!current) {
     const version = install(opts);
@@ -123,7 +120,7 @@ export function updateIfNeeded(opts: { silent?: boolean } = {}): { updated: bool
     return { updated: false, from: current, to: current };
   }
 
-  const latest = getLatestVersion();
+  const latest = await getLatestVersion();
   markUpdateCheck();
 
   if (!latest || current === latest) {
@@ -133,7 +130,7 @@ export function updateIfNeeded(opts: { silent?: boolean } = {}): { updated: bool
   const silent = opts.silent ?? false;
   const stdio: "inherit" | "ignore" = silent ? "ignore" : "inherit";
   const result = Bun.spawnSync(
-    ["npm", "update", "--prefix", OGS_ROOT, PACKAGE],
+    ["bun", "update", "--cwd", OGS_ROOT, PACKAGE],
     {
       stdio: ["ignore", stdio, stdio],
       env: Bun.env,
@@ -142,7 +139,7 @@ export function updateIfNeeded(opts: { silent?: boolean } = {}): { updated: bool
   );
 
   if (!result.success) {
-    throw new Error(`npm update failed with exit code ${result.exitCode}`);
+    throw new Error(`bun update failed with exit code ${result.exitCode}`);
   }
 
   const after = getInstalledVersion();
@@ -157,8 +154,8 @@ export function ensureInstalled(opts: { silent?: boolean } = {}): { bin: string;
   }
 
   try {
-    const result = updateIfNeeded({ silent: opts.silent ?? true });
-    return { bin: GEMINI_BIN, version: result.to };
+    updateIfNeeded({ silent: opts.silent ?? true }).catch(() => {});
+    return { bin: GEMINI_BIN, version: getInstalledVersion() };
   } catch (_e) {
     return { bin: GEMINI_BIN, version: getInstalledVersion() };
   }

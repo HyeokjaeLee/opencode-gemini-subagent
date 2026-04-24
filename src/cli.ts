@@ -78,7 +78,7 @@ async function cmdInstall(): Promise<void> {
 
 async function cmdUpdate(): Promise<void> {
   console.log("Checking for updates...");
-  const result = updateIfNeeded({ silent: false });
+  const result = await updateIfNeeded({ silent: false });
   if (result.updated) {
     console.log(`Updated: ${result.from ?? "(new)"} → ${result.to}`);
   } else {
@@ -152,7 +152,7 @@ async function cmdMcp(): Promise<void> {
       console.log("");
       console.log("Examples:");
       console.log("  ogs mcp add --transport http figma https://mcp.figma.com/mcp");
-      console.log("  ogs mcp add figma --env FIGMA_API_KEY=figd_xxx -- npx -y figma-developer-mcp --stdio");
+      console.log("  ogs mcp add figma --env FIGMA_API_KEY=figd_xxx -- bunx figma-developer-mcp --stdio");
       return;
     }
     await runInteractive(["mcp", "add", "--scope", "user", ...mcpArgs], { timeoutMs: 60_000 });
@@ -226,7 +226,7 @@ async function cmdDoctor(): Promise<void> {
 
   checks.push(await check("Gemini CLI version", async () => {
     const current = getInstalledVersion();
-    const latest = getLatestVersion();
+    const latest = await getLatestVersion();
     if (!current) throw new Error("Cannot determine installed version");
     if (latest && current !== latest) return `${current} (latest: ${latest} — run: ogs update)`;
     return `${current} (latest)`;
