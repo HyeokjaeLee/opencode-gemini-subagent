@@ -350,8 +350,8 @@ export async function cancelTask(taskId: string, opts: { waitMs?: number } = {})
 }
 
 export async function listTasks(): Promise<TaskSnapshot[]> {
-  if (!(await Bun.file(TASKS_DIR).exists())) return [];
-  const entries = await readdir(TASKS_DIR, { withFileTypes: true });
+  let entries: import("node:fs").Dirent[];
+  try { entries = await readdir(TASKS_DIR, { withFileTypes: true }); } catch { return []; }
   const tasks: TaskSnapshot[] = [];
   for (const e of entries) {
     if (!e.isDirectory()) continue;
@@ -365,8 +365,8 @@ export async function listTasks(): Promise<TaskSnapshot[]> {
 }
 
 export async function sweepOldTasks(): Promise<{ swept: number }> {
-  if (!(await Bun.file(TASKS_DIR).exists())) return { swept: 0 };
-  const entries = await readdir(TASKS_DIR, { withFileTypes: true });
+  let entries: import("node:fs").Dirent[];
+  try { entries = await readdir(TASKS_DIR, { withFileTypes: true }); } catch { return { swept: 0 }; }
   const now = Date.now();
   let swept = 0;
   for (const e of entries) {

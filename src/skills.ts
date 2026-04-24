@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { SKILLS_DIR } from "./paths.js";
 
@@ -39,7 +40,7 @@ function truncateToBytes(text: string, maxBytes: number): string {
 
 export async function loadSkills(): Promise<Skill[]> {
   if (cachedSkills && Date.now() - cachedAt < CACHE_TTL_MS) return cachedSkills;
-  if (!(await Bun.file(SKILLS_DIR).exists())) return [];
+  if (!existsSync(SKILLS_DIR)) return [];
 
   const skills: Skill[] = [];
   const glob = new Bun.Glob("*/SKILL.md");
