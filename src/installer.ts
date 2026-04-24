@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { OGS_ROOT, GEMINI_BIN, AGENTS_DIR } from "./paths.js";
@@ -97,8 +96,8 @@ export async function install(opts: { silent?: boolean } = {}): Promise<string> 
 }
 
 export async function syncBundledAgents(): Promise<{ copied: number }> {
-  if (existsSync(AGENTS_DIR)) return { copied: 0 };
-  if (!existsSync(BUNDLED_AGENTS_DIR)) return { copied: 0 };
+  if (await Bun.file(AGENTS_DIR).stat().catch(() => null)) return { copied: 0 };
+  if (!(await Bun.file(BUNDLED_AGENTS_DIR).stat().catch(() => null))) return { copied: 0 };
   await mkdir(AGENTS_DIR, { recursive: true });
   let copied = 0;
   const glob = new Bun.Glob("*.md");

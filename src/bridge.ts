@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import {
   GEMINI_BIN,
@@ -243,9 +242,9 @@ export async function getStatus(): Promise<GeminiStatus> {
   return {
     ogsRoot: OGS_ROOT,
     sandbox: GEMINI_SANDBOX,
-    sandboxExists: existsSync(GEMINI_SANDBOX),
+    sandboxExists: !!(await Bun.file(GEMINI_SANDBOX).stat().catch(() => null)),
     geminiHome: GEMINI_HOME,
-    geminiHomeExists: existsSync(GEMINI_HOME),
+    geminiHomeExists: !!(await Bun.file(GEMINI_HOME).stat().catch(() => null)),
     settingsPath: GEMINI_SETTINGS_PATH,
     bin: GEMINI_BIN,
     binExists,

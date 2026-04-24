@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import path from "node:path";
 import { AGENTS_DIR } from "./paths.js";
@@ -141,7 +140,7 @@ export async function parsePresetFile(filePath: string): Promise<GeminiPreset> {
 }
 
 export async function loadPresets(): Promise<{ presets: GeminiPreset[]; errors: Array<{ file: string; message: string }> }> {
-  if (!existsSync(AGENTS_DIR)) {
+  if (!(await Bun.file(AGENTS_DIR).stat().catch(() => null))) {
     return { presets: [], errors: [] };
   }
 

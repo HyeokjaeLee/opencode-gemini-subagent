@@ -4,7 +4,6 @@ import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVer
 import { listTasks, sweepOldTasks } from "./tasks.js";
 import { loadPresets } from "./presets.js";
 import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX, GEMINI_SETTINGS_PATH } from "./paths.js";
-import { existsSync } from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
@@ -213,7 +212,7 @@ async function cmdDoctor(): Promise<void> {
   }));
 
   checks.push(await check("OGS root directory", async () => {
-    if (!existsSync(OGS_ROOT)) throw new Error(`${OGS_ROOT} does not exist. Run: ogs install`);
+    if (!(await Bun.file(OGS_ROOT).stat().catch(() => null))) throw new Error(`${OGS_ROOT} does not exist. Run: ogs install`);
     return OGS_ROOT;
   }));
 
@@ -231,7 +230,7 @@ async function cmdDoctor(): Promise<void> {
   }));
 
   checks.push(await check("Sandbox directory", async () => {
-    if (!existsSync(GEMINI_SANDBOX)) throw new Error("Sandbox not initialized");
+    if (!(await Bun.file(GEMINI_SANDBOX).stat().catch(() => null))) throw new Error("Sandbox not initialized");
     return GEMINI_SANDBOX;
   }));
 
