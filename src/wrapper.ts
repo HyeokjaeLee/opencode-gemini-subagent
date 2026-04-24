@@ -5,14 +5,13 @@ import {
   fsyncSync,
   closeSync,
   openSync,
-  existsSync,
 } from "node:fs";
 import path from "node:path";
 
 const TERMINATION_GRACE_MS = 5_000;
 
 const taskDir = process.argv[2];
-if (!taskDir || !existsSync(taskDir)) {
+if (!taskDir || !(await Bun.file(taskDir).stat().catch(() => null))) {
   console.error(`wrapper: task_dir missing or does not exist: ${taskDir}`);
   process.exit(2);
 }
@@ -124,9 +123,9 @@ const softKillTimer = setTimeout(() => {
 
 const cancelPath = path.join(taskDir, "cancel.request");
 let cancelRequested = false;
-const cancelPoll = setInterval(() => {
+const cancelPoll = setInterval(async () => {
   if (cancelRequested) return;
-  if (existsSync(cancelPath)) {
+  if (await Bun.file(cancelPath).exists()) {
     cancelRequested = true;
     patchState({ cancel_requested_at: nowIso() }).catch(() => {});
     try { process.kill(-child.pid!, "SIGTERM"); }

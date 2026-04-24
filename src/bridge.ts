@@ -161,7 +161,7 @@ export async function runPromptBackground(options: RunOptions & { meta?: Record<
   if (typeof prompt !== "string" || prompt.length === 0) {
     throw new Error("runPromptBackground: `prompt` is required.");
   }
-  ensureInstalled({ silent: true });
+  await ensureInstalled({ silent: true });
   await ensureSandbox();
   const { startTask } = await import("./tasks.js");
   const argv = [GEMINI_BIN, ...buildPromptArgv({ approvalMode, outputFormat, model, extraArgs })];
