@@ -2,33 +2,33 @@ import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { AGENTS_DIR } from "./paths.mjs";
-import { runPrompt, runPromptBackground } from "./bridge.mjs";
+import { AGENTS_DIR } from "./paths.js";
+import { runPrompt, runPromptBackground } from "./bridge.js";
 
 const VALID_APPROVAL = new Set(["default", "auto_edit", "yolo", "plan"]);
 const VALID_FORMAT = new Set(["text", "json", "stream-json"]);
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i;
 
-/**
- * @typedef {Object} PresetArgSpec
- * @property {string} name
- * @property {string} [description]
- * @property {boolean} [required]
- *
- * @typedef {Object} GeminiPreset
- * @property {string} name                 Tool-safe identifier (file basename).
- * @property {string} toolName             "gemini_" + name.
- * @property {string} filePath
- * @property {string} description          Required; surfaced as the tool description.
- * @property {string} promptTemplate       Markdown body (post-frontmatter).
- * @property {PresetArgSpec[]} args
- * @property {string} [model]
- * @property {"default"|"auto_edit"|"yolo"|"plan"} approvalMode
- * @property {"text"|"json"|"stream-json"} outputFormat
- * @property {number} timeoutMs
- */
+export interface PresetArgSpec {
+  name: string;
+  description: string;
+  required: boolean;
+}
 
-function splitFrontmatter(raw) {
+export interface GeminiPreset {
+  name: string;
+  toolName: string;
+  filePath: string;
+  description: string;
+  promptTemplate: string;
+  args: PresetArgSpec[];
+  model: string | undefined;
+  approvalMode: "default" | "auto_edit" | "yolo" | "plan";
+  outputFormat: "text" | "json" | "stream-json";
+  timeoutMs: number;
+}
+
+function splitFrontmatter(raw: string): { yaml: string; body: string } {
   if (!raw.startsWith("---")) {
     throw new Error("missing YAML frontmatter (file must start with `---`)");
   }
@@ -42,18 +42,25 @@ function splitFrontmatter(raw) {
   return { yaml, body };
 }
 
-function validateArgs(rawArgs) {
+interface RawArgEntry {
+  name?: string;
+  description?: string;
+  required?: boolean;
+}
+
+function validateArgs(rawArgs: unknown): PresetArgSpec[] {
   if (rawArgs === undefined) return [];
   if (!Array.isArray(rawArgs)) {
     throw new Error("`args` must be a list");
   }
-  const seen = new Set();
-  const out = [];
+  const seen = new Set<string>();
+  const out: PresetArgSpec[] = [];
   for (const entry of rawArgs) {
     if (!entry || typeof entry !== "object") {
       throw new Error("each `args` entry must be an object");
     }
-    const { name, description, required } = entry;
+    const e = entry as RawArgEntry;
+    const { name, description, required } = e;
     if (typeof name !== "string" || !NAME_RE.test(name)) {
       throw new Error(
         `arg name must match ${NAME_RE} (got ${JSON.stringify(name)})`,
@@ -72,22 +79,15 @@ function validateArgs(rawArgs) {
   return out;
 }
 
-/**
- * Parse a single preset file. Throws on invalid frontmatter; the caller is
- * responsible for logging & skipping so one bad file never breaks the rest.
- *
- * @param {string} filePath
- * @returns {Promise<GeminiPreset>}
- */
-export async function parsePresetFile(filePath) {
+export async function parsePresetFile(filePath: string): Promise<GeminiPreset> {
   const raw = await readFile(filePath, "utf8");
   const { yaml, body } = splitFrontmatter(raw);
 
-  let fm;
+  let fm: Record<string, unknown>;
   try {
-    fm = parseYaml(yaml) ?? {};
+    fm = parseYaml(yaml) as Record<string, unknown> ?? {};
   } catch (err) {
-    throw new Error(`YAML parse error: ${err.message}`);
+    throw new Error(`YAML parse error: ${(err as Error).message}`);
   }
   if (typeof fm !== "object" || Array.isArray(fm)) {
     throw new Error("frontmatter must be a YAML mapping");
@@ -106,14 +106,14 @@ export async function parsePresetFile(filePath) {
     throw new Error("`description` is required in frontmatter");
   }
 
-  const approvalMode = fm.approval_mode ?? "plan";
+  const approvalMode = (fm.approval_mode ?? "plan") as string;
   if (!VALID_APPROVAL.has(approvalMode)) {
     throw new Error(
       `invalid approval_mode (got ${JSON.stringify(approvalMode)})`,
     );
   }
 
-  const outputFormat = fm.output_format ?? "text";
+  const outputFormat = (fm.output_format ?? "text") as string;
   if (!VALID_FORMAT.has(outputFormat)) {
     throw new Error(
       `invalid output_format (got ${JSON.stringify(outputFormat)})`,
@@ -122,10 +122,10 @@ export async function parsePresetFile(filePath) {
 
   const timeoutMs =
     typeof fm.timeout_ms === "number" && Number.isFinite(fm.timeout_ms)
-      ? fm.timeout_ms
+      ? fm.timeout_ms as number
       : 180_000;
 
-  const model = typeof fm.model === "string" ? fm.model : undefined;
+  const model = typeof fm.model === "string" ? fm.model as string : undefined;
 
   return {
     name: basename,
@@ -135,59 +135,41 @@ export async function parsePresetFile(filePath) {
     promptTemplate: body,
     args: validateArgs(fm.args),
     model,
-    approvalMode,
-    outputFormat,
+    approvalMode: approvalMode as GeminiPreset["approvalMode"],
+    outputFormat: outputFormat as GeminiPreset["outputFormat"],
     timeoutMs,
   };
 }
 
-/**
- * Scan AGENTS_DIR for *.md presets. Invalid files are reported via `errors`
- * and skipped; they do NOT abort loading of valid siblings.
- *
- * @returns {Promise<{ presets: GeminiPreset[], errors: Array<{ file: string, message: string }> }>}
- */
-export async function loadPresets() {
+export async function loadPresets(): Promise<{ presets: GeminiPreset[]; errors: Array<{ file: string; message: string }> }> {
   if (!existsSync(AGENTS_DIR)) {
     return { presets: [], errors: [] };
   }
   const entries = await readdir(AGENTS_DIR, { withFileTypes: true });
-  const presets = [];
-  const errors = [];
+  const presets: GeminiPreset[] = [];
+  const errors: Array<{ file: string; message: string }> = [];
   for (const ent of entries) {
     if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
     const filePath = path.join(AGENTS_DIR, ent.name);
     try {
       presets.push(await parsePresetFile(filePath));
     } catch (err) {
-      errors.push({ file: filePath, message: err?.message ?? String(err) });
+      errors.push({ file: filePath, message: (err as Error)?.message ?? String(err) });
     }
   }
   presets.sort((a, b) => a.name.localeCompare(b.name));
   return { presets, errors };
 }
 
-/**
- * Replace `{{name}}` occurrences in the template with the corresponding value.
- * Missing values become empty strings (preset body is responsible for making
- * sense when an optional arg is absent).
- */
-export function renderPromptTemplate(template, values) {
-  return template.replace(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g, (_m, k) => {
+export function renderPromptTemplate(template: string, values: Record<string, unknown>): string {
+  return template.replace(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g, (_m, k: string) => {
     const v = values[k];
     if (v === undefined || v === null) return "";
     return String(v);
   });
 }
 
-/**
- * Run a preset end-to-end: render prompt, enforce required args, call Gemini.
- *
- * @param {GeminiPreset} preset
- * @param {Record<string, unknown>} rawArgs
- * @param {{ cwd?: string, signal?: AbortSignal }} [opts]
- */
-function renderPresetPrompt(preset, rawArgs) {
+function renderPresetPrompt(preset: GeminiPreset, rawArgs: Record<string, unknown>): string {
   for (const spec of preset.args) {
     if (spec.required) {
       const v = rawArgs?.[spec.name];
@@ -199,7 +181,11 @@ function renderPresetPrompt(preset, rawArgs) {
   return renderPromptTemplate(preset.promptTemplate, rawArgs ?? {});
 }
 
-export async function runPreset(preset, rawArgs, opts = {}) {
+export async function runPreset(
+  preset: GeminiPreset,
+  rawArgs: Record<string, unknown>,
+  opts: { cwd?: string; signal?: AbortSignal } = {},
+) {
   const prompt = renderPresetPrompt(preset, rawArgs);
   return await runPrompt({
     prompt,
@@ -212,7 +198,11 @@ export async function runPreset(preset, rawArgs, opts = {}) {
   });
 }
 
-export async function runPresetBackground(preset, rawArgs, opts = {}) {
+export async function runPresetBackground(
+  preset: GeminiPreset,
+  rawArgs: Record<string, unknown>,
+  opts: { cwd?: string } = {},
+) {
   const prompt = renderPresetPrompt(preset, rawArgs);
   return await runPromptBackground({
     prompt,

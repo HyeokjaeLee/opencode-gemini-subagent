@@ -1,16 +1,17 @@
 #!/usr/bin/env node
-/**
- * Background task supervisor. Runs as a detached child of the plugin.
- * Owns the gemini subprocess and finalizes the task state file on exit,
- * so that tasks survive opencode restarts.
- *
- * Invocation:
- *   node wrapper.mjs <task_dir>
- * where <task_dir>/spec.json contains { argv, env, cwd, stdin, timeoutMs, spawnedAt }.
- */
-
 import { spawn } from "node:child_process";
-import { createWriteStream, openSync, writeFileSync, readFileSync, renameSync, fsyncSync, closeSync, existsSync, statSync, openSync as openSyncFs, readSync, closeSync as closeSyncFs } from "node:fs";
+import {
+  createWriteStream,
+  openSync,
+  writeFileSync,
+  readFileSync,
+  renameSync,
+  fsyncSync,
+  closeSync,
+  existsSync,
+  statSync,
+  readSync,
+} from "node:fs";
 import path from "node:path";
 
 const TERMINATION_GRACE_MS = 5_000;
@@ -27,7 +28,11 @@ const stdoutPath = path.join(taskDir, "stdout");
 const stderrPath = path.join(taskDir, "stderr");
 const resultPath = path.join(taskDir, "result.txt");
 
-function writeJsonAtomic(target, data) {
+interface StateData {
+  [key: string]: unknown;
+}
+
+function writeJsonAtomic(target: string, data: StateData): void {
   const tmp = `${target}.${process.pid}.tmp`;
   const payload = JSON.stringify(data, null, 2);
   const fd = openSync(tmp, "w", 0o600);
@@ -40,31 +45,27 @@ function writeJsonAtomic(target, data) {
   renameSync(tmp, target);
 }
 
-function readJson(target) {
-  return JSON.parse(readFileSync(target, "utf8"));
+function readJson(target: string): StateData {
+  return JSON.parse(readFileSync(target, "utf8")) as StateData;
 }
 
-function nowIso() {
+function nowIso(): string {
   return new Date().toISOString();
 }
 
-/**
- * On timeout, read the tail of stderr and classify the cause. Used only for
- * diagnostic annotation (timeout_cause); never drives lifecycle.
- */
-function classifyTimeoutCause(stderrPath) {
+function classifyTimeoutCause(stderrFilePath: string): string {
   try {
-    if (!existsSync(stderrPath)) return "unknown";
-    const s = statSync(stderrPath);
+    if (!existsSync(stderrFilePath)) return "unknown";
+    const s = statSync(stderrFilePath);
     const size = s.size;
     if (size === 0) return "silent";
     const readBytes = Math.min(16384, size);
     const buf = Buffer.alloc(readBytes);
-    const fd = openSyncFs(stderrPath, "r");
+    const fd = openSync(stderrFilePath, "r");
     try {
       readSync(fd, buf, 0, readBytes, size - readBytes);
     } finally {
-      closeSyncFs(fd);
+      closeSync(fd);
     }
     const tail = buf.toString("utf8");
     if (/MODEL_CAPACITY_EXHAUSTED|rateLimitExceeded|quota will reset after|RESOURCE_EXHAUSTED|status[:\s]+429/i.test(tail)) {
@@ -74,28 +75,37 @@ function classifyTimeoutCause(stderrPath) {
       return "network_error";
     }
     return "no_progress";
-  } catch {
+  } catch (_e) {
     return "unknown";
   }
 }
 
-function patchState(patch) {
-  let current = {};
+function patchState(patch: StateData): void {
+  let current: StateData = {};
   try {
     current = readJson(statePath);
-  } catch {}
+  } catch (_e) { /* ignore */ }
   writeJsonAtomic(statePath, { ...current, ...patch, updated_at: nowIso() });
 }
 
-const spec = readJson(specPath);
+interface Spec {
+  argv: string[];
+  env: Record<string, string | undefined>;
+  cwd: string;
+  stdin: string;
+  timeoutMs: number;
+  spawnedAt: string;
+}
+
+const spec = readJson(specPath) as unknown as Spec;
 const { argv, env, cwd, stdin, timeoutMs } = spec;
 
 const stdoutStream = createWriteStream(stdoutPath, { flags: "w", mode: 0o600 });
 const stderrStream = createWriteStream(stderrPath, { flags: "w", mode: 0o600 });
 
 await Promise.all([
-  new Promise((r) => stdoutStream.once("open", r)),
-  new Promise((r) => stderrStream.once("open", r)),
+  new Promise<void>((r) => stdoutStream.once("open", () => r())),
+  new Promise<void>((r) => stderrStream.once("open", () => r())),
 ]);
 
 const startedAt = nowIso();
@@ -122,19 +132,19 @@ if (typeof stdin === "string" && stdin.length > 0) {
 }
 
 let timedOut = false;
-let hardKillTimer = null;
+let hardKillTimer: ReturnType<typeof setTimeout> | null = null;
 const softKillTimer = setTimeout(() => {
   timedOut = true;
   try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
-    try { child.kill("SIGTERM"); } catch {}
+    process.kill(-child.pid!, "SIGTERM");
+  } catch (_e) {
+    try { child.kill("SIGTERM"); } catch (_e2) { /* ignore */ }
   }
   hardKillTimer = setTimeout(() => {
     try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      try { child.kill("SIGKILL"); } catch {}
+      process.kill(-child.pid!, "SIGKILL");
+    } catch (_e) {
+      try { child.kill("SIGKILL"); } catch (_e2) { /* ignore */ }
     }
   }, TERMINATION_GRACE_MS);
 }, timeoutMs ?? 180_000);
@@ -146,11 +156,11 @@ const cancelPoll = setInterval(() => {
   if (existsSync(cancelPath)) {
     cancelRequested = true;
     patchState({ cancel_requested_at: nowIso() });
-    try { process.kill(-child.pid, "SIGTERM"); }
-    catch { try { child.kill("SIGTERM"); } catch {} }
+    try { process.kill(-child.pid!, "SIGTERM"); }
+    catch (_e) { try { child.kill("SIGTERM"); } catch (_e2) { /* ignore */ } }
     hardKillTimer = setTimeout(() => {
-      try { process.kill(-child.pid, "SIGKILL"); }
-      catch { try { child.kill("SIGKILL"); } catch {} }
+      try { process.kill(-child.pid!, "SIGKILL"); }
+      catch (_e) { try { child.kill("SIGKILL"); } catch (_e2) { /* ignore */ } }
     }, TERMINATION_GRACE_MS);
   }
 }, 200);
@@ -164,20 +174,18 @@ child.on("close", (code, signal) => {
   stderrStream.end();
 
   let stdoutText = "";
-  try { stdoutText = readFileSync(stdoutPath, "utf8"); } catch {}
+  try { stdoutText = readFileSync(stdoutPath, "utf8"); } catch (_e) { /* ignore */ }
 
   try {
     writeFileSync(resultPath, stdoutText, { mode: 0o600 });
-  } catch {}
+  } catch (_e) { /* ignore */ }
 
-  let status;
+  let status: string;
   if (cancelRequested) status = "cancelled";
   else if (timedOut) status = "timeout";
   else if (code === 0) status = "completed";
   else status = "failed";
 
-  // Advisory cause annotation for timeouts. Separate from the status so the
-  // terminal state machine (isTerminal()) stays unchanged.
   const timeoutCause = timedOut ? classifyTimeoutCause(stderrPath) : null;
 
   patchState({

@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { OGS_ROOT, GEMINI_BIN, AGENTS_DIR } from "./paths.mjs";
+import { OGS_ROOT, GEMINI_BIN, AGENTS_DIR } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_AGENTS_DIR = path.join(__dirname, "..", "agents");
@@ -11,50 +11,50 @@ const PACKAGE = "@google/gemini-cli";
 const UPDATE_CHECK_TTL_MS = 24 * 60 * 60_000;
 const UPDATE_CHECK_FILE = `${OGS_ROOT}/.last-update-check`;
 
-function getLastUpdateCheck() {
+function getLastUpdateCheck(): number {
   try {
     if (existsSync(UPDATE_CHECK_FILE)) {
       return Number(readFileSync(UPDATE_CHECK_FILE, "utf8").trim());
     }
-  } catch {}
+  } catch (_e) { /* ignore */ }
   return 0;
 }
 
-function markUpdateCheck() {
+function markUpdateCheck(): void {
   try {
     mkdirSync(OGS_ROOT, { recursive: true });
     writeFileSync(UPDATE_CHECK_FILE, String(Date.now()), { mode: 0o644 });
-  } catch {}
+  } catch (_e) { /* ignore */ }
 }
 
-export function getInstalledVersion() {
+export function getInstalledVersion(): string | null {
   try {
     const pkgPath = `${OGS_ROOT}/node_modules/${PACKAGE}/package.json`;
     if (!existsSync(pkgPath)) return null;
     const raw = readFileSync(pkgPath, "utf8");
     return JSON.parse(raw).version ?? null;
-  } catch {
+  } catch (_e) {
     return null;
   }
 }
 
-export function getLatestVersion() {
+export function getLatestVersion(): string | null {
   try {
     const out = execSync(`npm view ${PACKAGE} version`, {
       encoding: "utf8",
       timeout: 15_000,
     });
     return out.trim() || null;
-  } catch {
+  } catch (_e) {
     return null;
   }
 }
 
-export function isInstalled() {
+export function isInstalled(): boolean {
   return existsSync(GEMINI_BIN);
 }
 
-function ensureRoot() {
+function ensureRoot(): void {
   if (!existsSync(OGS_ROOT)) {
     mkdirSync(OGS_ROOT, { recursive: true });
   }
@@ -75,10 +75,10 @@ function ensureRoot() {
   }
 }
 
-export function install(opts = {}) {
+export function install(opts: { silent?: boolean } = {}): string {
   ensureRoot();
   const silent = opts.silent ?? false;
-  const stdio = silent ? "pipe" : "inherit";
+  const stdio: "pipe" | "inherit" = silent ? "pipe" : "inherit";
 
   execSync(`npm install --prefix "${OGS_ROOT}" ${PACKAGE}`, {
     stdio,
@@ -91,28 +91,23 @@ export function install(opts = {}) {
     );
   }
 
-  return getInstalledVersion();
+  return getInstalledVersion()!;
 }
 
-export function syncBundledAgents() {
+export function syncBundledAgents(): { copied: number } {
+  if (existsSync(AGENTS_DIR)) return { copied: 0 };
   if (!existsSync(BUNDLED_AGENTS_DIR)) return { copied: 0 };
   mkdirSync(AGENTS_DIR, { recursive: true });
   let copied = 0;
   for (const f of readdirSync(BUNDLED_AGENTS_DIR)) {
     if (!f.endsWith(".md")) continue;
-    const src = path.join(BUNDLED_AGENTS_DIR, f);
-    const dst = path.join(AGENTS_DIR, f);
-    const srcContent = readFileSync(src, "utf8");
-    const dstContent = existsSync(dst) ? readFileSync(dst, "utf8") : null;
-    if (srcContent !== dstContent) {
-      copyFileSync(src, dst);
-      copied++;
-    }
+    copyFileSync(path.join(BUNDLED_AGENTS_DIR, f), path.join(AGENTS_DIR, f));
+    copied++;
   }
   return { copied };
 }
 
-export function updateIfNeeded(opts = {}) {
+export function updateIfNeeded(opts: { silent?: boolean } = {}): { updated: boolean; from: string | null; to: string | null } {
   const current = getInstalledVersion();
   if (!current) {
     const version = install(opts);
@@ -131,7 +126,7 @@ export function updateIfNeeded(opts = {}) {
   }
 
   const silent = opts.silent ?? false;
-  const stdio = silent ? "pipe" : "inherit";
+  const stdio: "pipe" | "inherit" = silent ? "pipe" : "inherit";
   execSync(`npm update --prefix "${OGS_ROOT}" ${PACKAGE}`, {
     stdio,
     timeout: 120_000,
@@ -141,7 +136,7 @@ export function updateIfNeeded(opts = {}) {
   return { updated: true, from: current, to: after ?? latest };
 }
 
-export function ensureInstalled(opts = {}) {
+export function ensureInstalled(opts: { silent?: boolean } = {}): { bin: string; version: string | null } {
   syncBundledAgents();
   if (!isInstalled()) {
     const version = install({ silent: opts.silent ?? true });
@@ -151,7 +146,7 @@ export function ensureInstalled(opts = {}) {
   try {
     const result = updateIfNeeded({ silent: opts.silent ?? true });
     return { bin: GEMINI_BIN, version: result.to };
-  } catch {
+  } catch (_e) {
     return { bin: GEMINI_BIN, version: getInstalledVersion() };
   }
 }

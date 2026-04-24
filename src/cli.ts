@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-import { getStatus, runInteractive, resetSandbox, ensureSandbox } from "../src/bridge.mjs";
-import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVersion } from "../src/installer.mjs";
-import { listTasks, inspectTask, cancelTask, readResult } from "../src/tasks.mjs";
-import { loadPresets } from "../src/presets.mjs";
-import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX, GEMINI_SETTINGS_PATH } from "../src/paths.mjs";
+import { getStatus, runInteractive, resetSandbox, ensureSandbox } from "./bridge.js";
+import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVersion } from "./installer.js";
+import { listTasks, sweepOldTasks } from "./tasks.js";
+import { loadPresets } from "./presets.js";
+import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX, GEMINI_SETTINGS_PATH } from "./paths.js";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
 const cmd = args[0] ?? "help";
 
-async function main() {
+async function main(): Promise<void> {
   switch (cmd) {
     case "status":
       return cmdStatus();
@@ -34,7 +34,7 @@ async function main() {
   }
 }
 
-async function cmdStatus() {
+async function cmdStatus(): Promise<void> {
   const s = await getStatus();
   const { presets, errors } = await loadPresets();
   const tasks = await listTasks();
@@ -57,26 +57,26 @@ async function cmdStatus() {
   console.log(`  global ignored:${s.globalHomeIgnored}`);
 }
 
-async function cmdAuth() {
+async function cmdAuth(): Promise<void> {
   console.log("Launching Gemini OAuth in isolated sandbox...");
   await ensureSandbox();
   const res = await runInteractive(["auth"], { timeoutMs: 10 * 60_000 });
   process.exit(res.exitCode);
 }
 
-async function cmdAuthReset() {
+async function cmdAuthReset(): Promise<void> {
   console.log("Resetting sandbox...");
   await resetSandbox();
   console.log("Sandbox reset. Run `ogs auth` to re-authenticate.");
 }
 
-async function cmdInstall() {
+async function cmdInstall(): Promise<void> {
   console.log("Installing @google/gemini-cli in", OGS_ROOT);
   const version = install({ silent: false });
   console.log(`Installed: ${version}`);
 }
 
-async function cmdUpdate() {
+async function cmdUpdate(): Promise<void> {
   console.log("Checking for updates...");
   const result = updateIfNeeded({ silent: false });
   if (result.updated) {
@@ -86,12 +86,11 @@ async function cmdUpdate() {
   }
 }
 
-async function cmdTasks() {
+async function cmdTasks(): Promise<void> {
   const sub = args[1];
   const tasks = await listTasks();
 
   if (sub === "clean" || sub === "sweep") {
-    const { sweepOldTasks } = await import("../src/tasks.mjs");
     const { swept } = await sweepOldTasks();
     console.log(`Swept ${swept} old terminal tasks.`);
     return;
@@ -115,7 +114,18 @@ async function cmdTasks() {
   }
 }
 
-async function cmdMcp() {
+interface McpServerConfig {
+  url?: string;
+  command?: string;
+  disabled?: boolean;
+}
+
+interface SettingsFile {
+  security?: { auth?: { selectedType?: string } };
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+async function cmdMcp(): Promise<void> {
   const sub = args[1];
   if (!sub) {
     console.log("Usage: ogs mcp <list|add|remove|auth> [args...]");
@@ -175,27 +185,27 @@ async function cmdMcp() {
   }
 }
 
-function readSettings() {
+function readSettings(): SettingsFile {
   try {
     if (existsSync(GEMINI_SETTINGS_PATH)) {
-      return JSON.parse(readFileSync(GEMINI_SETTINGS_PATH, "utf8"));
+      return JSON.parse(readFileSync(GEMINI_SETTINGS_PATH, "utf8")) as SettingsFile;
     }
-  } catch {}
+  } catch (_e) { /* ignore */ }
   return { security: { auth: { selectedType: "oauth-personal" } }, mcpServers: {} };
 }
 
-function writeSettings(settings) {
+function writeSettings(settings: SettingsFile): void {
   if (!existsSync(GEMINI_SETTINGS_PATH)) {
     mkdirSync(path.dirname(GEMINI_SETTINGS_PATH), { recursive: true });
   }
   writeFileSync(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 }
 
-async function cmdDoctor() {
+async function cmdDoctor(): Promise<void> {
   console.log("OGS Doctor");
   console.log("─────────");
 
-  const checks = [];
+  const checks: Array<{ ok: boolean }> = [];
 
   checks.push(await check("Node binary", async () => {
     const { spawnSync } = await import("node:child_process");
@@ -242,18 +252,18 @@ async function cmdDoctor() {
   if (passed < total) process.exit(1);
 }
 
-async function check(name, fn) {
+async function check(name: string, fn: () => Promise<string>): Promise<{ ok: boolean }> {
   try {
     const detail = await fn();
     console.log(`  ✓ ${name}: ${detail}`);
     return { ok: true };
   } catch (err) {
-    console.log(`  ✗ ${name}: ${err.message}`);
+    console.log(`  ✗ ${name}: ${(err as Error).message}`);
     return { ok: false };
   }
 }
 
-function cmdHelp() {
+function cmdHelp(): void {
   console.log(`ogs — opencode-gemini-subagent CLI
 
 Usage:
@@ -277,6 +287,6 @@ Commands:
 }
 
 main().catch((err) => {
-  console.error(`ogs: ${err?.message ?? err}`);
+  console.error(`ogs: ${(err as Error)?.message ?? err}`);
   process.exit(1);
 });

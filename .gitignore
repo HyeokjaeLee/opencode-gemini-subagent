@@ -1,6 +1,8 @@
 node_modules/
+dist/
 .ogs-sandbox/
 .gemini/
 *.log
 .DS_Store
 /opencode-gemini-subagent-*.tgz
+.sisyphus

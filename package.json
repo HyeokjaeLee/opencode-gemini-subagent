@@ -3,17 +3,18 @@
   "version": "0.1.16",
   "description": "Delegate work to Gemini as an opencode subagent — built-in web search, background tasks, preset automation.",
   "type": "module",
-  "main": "src/plugin.js",
+  "main": "dist/plugin.js",
   "bin": {
-    "ogs": "bin/ogs.js"
+    "ogs": "dist/cli.js"
   },
   "files": [
-    "src",
-    "bin",
+    "dist",
     "agents",
     "postinstall.mjs"
   ],
   "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
     "postinstall": "node postinstall.mjs"
   },
   "keywords": [
@@ -44,7 +45,10 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
+  },
   "bugs": {
     "url": "https://github.com/HyeokjaeLee/opencode-gemini-subagent/issues"
   },

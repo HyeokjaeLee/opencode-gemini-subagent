@@ -3,7 +3,17 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const pluginPath = resolve(__dirname, "src", "plugin.js");
+const pluginPath = resolve(__dirname, "dist", "plugin.js");
+
+try {
+  const { syncBundledAgents } = await import("./dist/installer.js");
+  const { copied } = syncBundledAgents();
+  if (copied > 0) {
+    console.log(`[ogs] seeded ${copied} bundled agent(s) to agents-gemini/`);
+  }
+} catch (err) {
+  console.warn(`[ogs] could not seed bundled agents: ${err?.message ?? err}`);
+}
 
 console.log(`
 ╭─────────────────────────────────────────────╮
