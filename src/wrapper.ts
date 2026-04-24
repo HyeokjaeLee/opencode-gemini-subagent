@@ -1,13 +1,11 @@
-#!/usr/bin/env node
-import { spawn } from "node:child_process";
+#!/usr/bin/env bun
 import {
-  createWriteStream,
-  openSync,
   writeFileSync,
   readFileSync,
   renameSync,
   fsyncSync,
   closeSync,
+  openSync,
   existsSync,
   statSync,
   readSync,
@@ -100,36 +98,20 @@ interface Spec {
 const spec = readJson(specPath) as unknown as Spec;
 const { argv, env, cwd, stdin, timeoutMs } = spec;
 
-const stdoutStream = createWriteStream(stdoutPath, { flags: "w", mode: 0o600 });
-const stderrStream = createWriteStream(stderrPath, { flags: "w", mode: 0o600 });
-
-await Promise.all([
-  new Promise<void>((r) => stdoutStream.once("open", () => r())),
-  new Promise<void>((r) => stderrStream.once("open", () => r())),
-]);
-
 const startedAt = nowIso();
-const child = spawn(argv[0], argv.slice(1), {
+const child = Bun.spawn(argv, {
   cwd,
-  env,
-  stdio: ["pipe", "pipe", "pipe"],
-  detached: true,
+  env: env as Record<string, string>,
+  stdin: (typeof stdin === "string" && stdin.length > 0) ? new TextEncoder().encode(stdin) : "pipe",
+  stdout: "pipe",
+  stderr: "pipe",
 });
-
-child.stdout.pipe(stdoutStream);
-child.stderr.pipe(stderrStream);
 
 patchState({
   status: "running",
   child_pid: child.pid,
   started_at: startedAt,
 });
-
-if (typeof stdin === "string" && stdin.length > 0) {
-  child.stdin.end(stdin);
-} else {
-  child.stdin.end();
-}
 
 let timedOut = false;
 let hardKillTimer: ReturnType<typeof setTimeout> | null = null;
@@ -138,7 +120,7 @@ const softKillTimer = setTimeout(() => {
   try {
     process.kill(-child.pid!, "SIGTERM");
   } catch (_e) {
-    try { child.kill("SIGTERM"); } catch (_e2) { /* ignore */ }
+    try { child.kill(); } catch (_e2) { /* ignore */ }
   }
   hardKillTimer = setTimeout(() => {
     try {
@@ -157,7 +139,7 @@ const cancelPoll = setInterval(() => {
     cancelRequested = true;
     patchState({ cancel_requested_at: nowIso() });
     try { process.kill(-child.pid!, "SIGTERM"); }
-    catch (_e) { try { child.kill("SIGTERM"); } catch (_e2) { /* ignore */ } }
+    catch (_e) { try { child.kill(); } catch (_e2) { /* ignore */ } }
     hardKillTimer = setTimeout(() => {
       try { process.kill(-child.pid!, "SIGKILL"); }
       catch (_e) { try { child.kill("SIGKILL"); } catch (_e2) { /* ignore */ } }
@@ -165,55 +147,45 @@ const cancelPoll = setInterval(() => {
   }
 }, 200);
 
-child.on("close", (code, signal) => {
-  clearTimeout(softKillTimer);
-  if (hardKillTimer) clearTimeout(hardKillTimer);
-  clearInterval(cancelPoll);
+const stdoutWrite = Bun.write(stdoutPath, new Response(child.stdout));
+const stderrWrite = Bun.write(stderrPath, new Response(child.stderr));
 
-  stdoutStream.end();
-  stderrStream.end();
+try {
+  await Promise.all([stdoutWrite, stderrWrite, child.exited]);
+} catch (_e) {
+  try { await child.exited; } catch (_e2) { /* ignore */ }
+}
 
-  let stdoutText = "";
-  try { stdoutText = readFileSync(stdoutPath, "utf8"); } catch (_e) { /* ignore */ }
+clearTimeout(softKillTimer);
+if (hardKillTimer) clearTimeout(hardKillTimer);
+clearInterval(cancelPoll);
 
-  try {
-    writeFileSync(resultPath, stdoutText, { mode: 0o600 });
-  } catch (_e) { /* ignore */ }
+let stdoutText = "";
+try { stdoutText = readFileSync(stdoutPath, "utf8"); } catch (_e) { /* ignore */ }
 
-  let status: string;
-  if (cancelRequested) status = "cancelled";
-  else if (timedOut) status = "timeout";
-  else if (code === 0) status = "completed";
-  else status = "failed";
+try {
+  writeFileSync(resultPath, stdoutText, { mode: 0o600 });
+} catch (_e) { /* ignore */ }
 
-  const timeoutCause = timedOut ? classifyTimeoutCause(stderrPath) : null;
+let status: string;
+if (cancelRequested) status = "cancelled";
+else if (timedOut) status = "timeout";
+else if (child.exitCode === 0) status = "completed";
+else status = "failed";
 
-  patchState({
-    status,
-    exit_code: code,
-    signal,
-    timed_out: timedOut,
-    cancelled: cancelRequested,
-    completed_at: nowIso(),
-    result_path: resultPath,
-    stdout_bytes: stdoutStream.bytesWritten,
-    stderr_bytes: stderrStream.bytesWritten,
-    timeout_cause: timeoutCause,
-  });
+const timeoutCause = timedOut ? classifyTimeoutCause(stderrPath) : null;
 
-  process.exit(0);
+patchState({
+  status,
+  exit_code: child.exitCode,
+  signal: null,
+  timed_out: timedOut,
+  cancelled: cancelRequested,
+  completed_at: nowIso(),
+  result_path: resultPath,
+  stdout_bytes: existsSync(stdoutPath) ? statSync(stdoutPath).size : 0,
+  stderr_bytes: existsSync(stderrPath) ? statSync(stderrPath).size : 0,
+  timeout_cause: timeoutCause,
 });
 
-child.on("error", (err) => {
-  clearTimeout(softKillTimer);
-  if (hardKillTimer) clearTimeout(hardKillTimer);
-  clearInterval(cancelPoll);
-  stdoutStream.end();
-  stderrStream.end();
-  patchState({
-    status: "failed",
-    spawn_error: err?.message ?? String(err),
-    completed_at: nowIso(),
-  });
-  process.exit(1);
-});
+process.exit(0);

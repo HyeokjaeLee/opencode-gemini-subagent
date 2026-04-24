@@ -1,32 +1,11 @@
-import { spawn, spawnSync } from "node:child_process";
-import { mkdir, writeFile, readFile, readdir, rm, stat } from "node:fs/promises";
 import { existsSync, openSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { TASKS_DIR } from "./paths.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WRAPPER_PATH = path.join(__dirname, "wrapper.js");
+const WRAPPER_PATH = path.join(import.meta.dir, "wrapper.js");
 
-const NODE_BIN: string = (() => {
-  const fromEnv = process.env.OGS_NODE_BIN;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  try {
-    const r = spawnSync("which", ["node"], { encoding: "utf8" });
-    const p = r.stdout?.trim();
-    if (p && existsSync(p)) return p;
-  } catch (_e) { /* ignore */ }
-  for (const candidate of [
-    "/opt/homebrew/bin/node",
-    "/usr/local/bin/node",
-    "/usr/bin/node",
-    `${process.env.HOME}/Library/pnpm/nodejs/bin/node`,
-  ]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return process.execPath;
-})();
+const BUN_BIN: string = process.execPath;
 
 const TASK_ID_RE = /^gem_[0-9a-f-]{36}$/;
 const TERMINAL_RETENTION_MS = 72 * 60 * 60_000;
@@ -69,12 +48,12 @@ interface TaskState {
 
 async function readState(taskId: string): Promise<TaskState | null> {
   const p = path.join(taskDirFor(taskId), "state.json");
-  if (!existsSync(p)) return null;
+  if (!(await Bun.file(p).exists())) return null;
   try {
-    return JSON.parse(await readFile(p, "utf8")) as TaskState;
+    return JSON.parse(await Bun.file(p).text()) as TaskState;
   } catch (_e) {
     await new Promise((r) => setTimeout(r, 50));
-    try { return JSON.parse(await readFile(p, "utf8")) as TaskState; }
+    try { return JSON.parse(await Bun.file(p).text()) as TaskState; }
     catch (_e2) { return null; }
   }
 }
@@ -87,27 +66,30 @@ async function isProcessAlive(pid: number, expectedStart?: string | null): Promi
   }
   if (!expectedStart) return true;
   return new Promise((resolve) => {
-    const ps = spawn("ps", ["-o", "lstart=", "-p", String(pid)], {
+    const ps = Bun.spawn(["ps", "-o", "lstart=", "-p", String(pid)], {
       stdio: ["ignore", "pipe", "ignore"],
-      env: { ...process.env, LC_ALL: "C", LC_TIME: "C", LANG: "C" },
+      env: { ...Bun.env, LC_ALL: "C", LC_TIME: "C", LANG: "C" },
     });
     let out = "";
-    ps.stdout.on("data", (d: Buffer) => (out += d.toString()));
-    ps.on("close", () => resolve(out.trim() === expectedStart.trim()));
-    ps.on("error", () => resolve(false));
+    (async () => {
+      out = await new Response(ps.stdout).text();
+      await ps.exited;
+      resolve(out.trim() === expectedStart.trim());
+    })().catch(() => resolve(false));
   });
 }
 
 async function captureProcessStart(pid: number): Promise<string | null> {
   return new Promise((resolve) => {
-    const ps = spawn("ps", ["-o", "lstart=", "-p", String(pid)], {
+    const ps = Bun.spawn(["ps", "-o", "lstart=", "-p", String(pid)], {
       stdio: ["ignore", "pipe", "ignore"],
-      env: { ...process.env, LC_ALL: "C", LC_TIME: "C", LANG: "C" },
+      env: { ...Bun.env, LC_ALL: "C", LC_TIME: "C", LANG: "C" },
     });
-    let out = "";
-    ps.stdout.on("data", (d: Buffer) => (out += d.toString()));
-    ps.on("close", () => resolve(out.trim() || null));
-    ps.on("error", () => resolve(null));
+    (async () => {
+      const out = await new Response(ps.stdout).text();
+      await ps.exited;
+      resolve(out.trim() || null);
+    })().catch(() => resolve(null));
   });
 }
 
@@ -123,7 +105,7 @@ export interface StartTaskOptions {
 export async function startTask(options: StartTaskOptions): Promise<{ task_id: string; task_dir: string }> {
   await ensureTasksRoot();
 
-  const taskId = `gem_${randomUUID()}`;
+  const taskId = `gem_${crypto.randomUUID()}`;
   const taskDir = taskDirFor(taskId);
   await mkdir(taskDir, { recursive: true, mode: 0o700 });
 
@@ -135,9 +117,7 @@ export async function startTask(options: StartTaskOptions): Promise<{ task_id: s
     timeoutMs: options.timeoutMs ?? 180_000,
     spawnedAt: new Date().toISOString(),
   };
-  await writeFile(path.join(taskDir, "spec.json"), JSON.stringify(spec, null, 2), {
-    mode: 0o600,
-  });
+  await Bun.write(path.join(taskDir, "spec.json"), JSON.stringify(spec, null, 2));
 
   const initialState: TaskState = {
     task_id: taskId,
@@ -148,19 +128,19 @@ export async function startTask(options: StartTaskOptions): Promise<{ task_id: s
     updated_at: spec.spawnedAt,
     timeout_ms: spec.timeoutMs,
   };
-  await writeFile(path.join(taskDir, "state.json"), JSON.stringify(initialState, null, 2), {
-    mode: 0o600,
-  });
+  await Bun.write(path.join(taskDir, "state.json"), JSON.stringify(initialState, null, 2));
 
   const wrapperErrFd = openSync(path.join(taskDir, "wrapper.err"), "a", 0o600);
-  const wrapper = spawn(NODE_BIN, [WRAPPER_PATH, taskDir], {
+  const wrapper = Bun.spawn([BUN_BIN, WRAPPER_PATH, taskDir], {
     detached: true,
-    stdio: ["ignore", wrapperErrFd, wrapperErrFd],
+    stdin: "ignore",
+    stdout: wrapperErrFd,
+    stderr: wrapperErrFd,
     cwd: options.cwd,
   });
   wrapper.unref();
 
-  const wrapperStart = await captureProcessStart(wrapper.pid!);
+  const wrapperStart = await captureProcessStart(wrapper.pid);
 
   const bootState: TaskState = {
     ...initialState,
@@ -169,9 +149,7 @@ export async function startTask(options: StartTaskOptions): Promise<{ task_id: s
     wrapper_started: wrapperStart,
     updated_at: new Date().toISOString(),
   };
-  await writeFile(path.join(taskDir, "state.json"), JSON.stringify(bootState, null, 2), {
-    mode: 0o600,
-  });
+  await Bun.write(path.join(taskDir, "state.json"), JSON.stringify(bootState, null, 2));
 
   return { task_id: taskId, task_dir: taskDir };
 }
@@ -281,24 +259,24 @@ export async function inspectTask(taskId: string): Promise<TaskSnapshot> {
 export async function readResult(taskId: string): Promise<string | null> {
   const dir = taskDirFor(taskId);
   const p = path.join(dir, "result.txt");
-  if (!existsSync(p)) return null;
-  return await readFile(p, "utf8");
+  if (!(await Bun.file(p).exists())) return null;
+  return await Bun.file(p).text();
 }
 
 export async function readStderr(taskId: string): Promise<string> {
   const dir = taskDirFor(taskId);
   const p = path.join(dir, "stderr");
-  if (!existsSync(p)) return "";
-  return await readFile(p, "utf8");
+  if (!(await Bun.file(p).exists())) return "";
+  return await Bun.file(p).text();
 }
 
 async function readTail(filePath: string, maxBytes: number): Promise<string> {
-  if (!existsSync(filePath)) return "";
+  if (!(await Bun.file(filePath).exists())) return "";
   try {
     const s = await stat(filePath);
     const size = s.size;
     if (size === 0) return "";
-    if (size <= maxBytes) return await readFile(filePath, "utf8");
+    if (size <= maxBytes) return await Bun.file(filePath).text();
     const fd = await (await import("node:fs/promises")).open(filePath, "r");
     try {
       const buf = Buffer.alloc(maxBytes);
@@ -372,16 +350,14 @@ export async function cancelTask(taskId: string, opts: { waitMs?: number } = {})
   if (!state) return { task_id: taskId, status: "unknown" } as TaskSnapshot;
   if (isTerminal(state.status ?? "")) return await inspectTask(taskId);
 
-  await writeFile(path.join(dir, "cancel.request"), new Date().toISOString(), {
-    mode: 0o600,
-  });
+  await Bun.write(path.join(dir, "cancel.request"), new Date().toISOString());
 
   const finalSnap = await waitForTask(taskId, waitMs);
   return finalSnap;
 }
 
 export async function listTasks(): Promise<TaskSnapshot[]> {
-  if (!existsSync(TASKS_DIR)) return [];
+  if (!(await Bun.file(TASKS_DIR).exists())) return [];
   const entries = await readdir(TASKS_DIR, { withFileTypes: true });
   const tasks: TaskSnapshot[] = [];
   for (const e of entries) {
@@ -396,7 +372,7 @@ export async function listTasks(): Promise<TaskSnapshot[]> {
 }
 
 export async function sweepOldTasks(): Promise<{ swept: number }> {
-  if (!existsSync(TASKS_DIR)) return { swept: 0 };
+  if (!(await Bun.file(TASKS_DIR).exists())) return { swept: 0 };
   const entries = await readdir(TASKS_DIR, { withFileTypes: true });
   const now = Date.now();
   let swept = 0;

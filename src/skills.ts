@@ -1,4 +1,3 @@
-import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { SKILLS_DIR } from "./paths.js";
@@ -41,31 +40,31 @@ function truncateToBytes(text: string, maxBytes: number): string {
 
 export async function loadSkills(): Promise<Skill[]> {
   if (cachedSkills && Date.now() - cachedAt < CACHE_TTL_MS) return cachedSkills;
-  if (!existsSync(SKILLS_DIR)) return [];
+  if (!(await Bun.file(SKILLS_DIR).exists())) return [];
 
-  let entries;
+  const skills: Skill[] = [];
+  const glob = new Bun.Glob("*/SKILL.md");
+
   try {
-    entries = await readdir(SKILLS_DIR, { withFileTypes: true });
+    for await (const match of glob.scan({ cwd: SKILLS_DIR })) {
+      const dirName = match.split("/")[0]!;
+      const skillFile = path.join(SKILLS_DIR, match);
+      if (!(await Bun.file(skillFile).exists())) continue;
+      try {
+        const content = await Bun.file(skillFile).text();
+        const fm = parseSimpleFrontmatter(content);
+        skills.push({
+          name: dirName,
+          filePath: skillFile,
+          content,
+          description: fm.description,
+        });
+      } catch (_e) { /* skip unreadable skills */ }
+    }
   } catch (_e) {
     return [];
   }
 
-  const skills: Skill[] = [];
-  for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
-    const skillFile = path.join(SKILLS_DIR, ent.name, "SKILL.md");
-    if (!existsSync(skillFile)) continue;
-    try {
-      const content = await readFile(skillFile, "utf8");
-      const fm = parseSimpleFrontmatter(content);
-      skills.push({
-        name: ent.name,
-        filePath: skillFile,
-        content,
-        description: fm.description,
-      });
-    } catch (_e) { /* skip unreadable skills */ }
-  }
   cachedSkills = skills;
   cachedAt = Date.now();
   return skills;

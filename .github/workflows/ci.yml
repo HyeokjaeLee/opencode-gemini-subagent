@@ -14,14 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20, 22]
+        bun-version: [1.1, latest]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ matrix.node-version }}
+          bun-version: ${{ matrix.bun-version }}
 
-      - run: npm install --ignore-scripts
+      - run: bun install --ignore-scripts
 
-      - run: npm run build
+      - run: bun run build

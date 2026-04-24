@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { getStatus, runInteractive, resetSandbox, ensureSandbox } from "./bridge.js";
 import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVersion } from "./installer.js";
 import { listTasks, sweepOldTasks } from "./tasks.js";
 import { loadPresets } from "./presets.js";
 import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX, GEMINI_SETTINGS_PATH } from "./paths.js";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
@@ -188,7 +188,8 @@ async function cmdMcp(): Promise<void> {
 function readSettings(): SettingsFile {
   try {
     if (existsSync(GEMINI_SETTINGS_PATH)) {
-      return JSON.parse(readFileSync(GEMINI_SETTINGS_PATH, "utf8")) as SettingsFile;
+      const raw = readFileSync(GEMINI_SETTINGS_PATH, "utf8");
+      if (raw) return JSON.parse(raw) as SettingsFile;
     }
   } catch (_e) { /* ignore */ }
   return { security: { auth: { selectedType: "oauth-personal" } }, mcpServers: {} };
@@ -198,7 +199,7 @@ function writeSettings(settings: SettingsFile): void {
   if (!existsSync(GEMINI_SETTINGS_PATH)) {
     mkdirSync(path.dirname(GEMINI_SETTINGS_PATH), { recursive: true });
   }
-  writeFileSync(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
+  Bun.write(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 }
 
 async function cmdDoctor(): Promise<void> {
@@ -207,16 +208,13 @@ async function cmdDoctor(): Promise<void> {
 
   const checks: Array<{ ok: boolean }> = [];
 
-  checks.push(await check("Node binary", async () => {
-    const { spawnSync } = await import("node:child_process");
-    const r = spawnSync("which", ["node"], { encoding: "utf8" });
-    const p = r.stdout?.trim();
-    if (!p) throw new Error("node not found in PATH");
+  checks.push(await check("Bun binary", async () => {
+    const p = process.execPath;
+    if (!p) throw new Error("bun not found");
     return p;
   }));
 
   checks.push(await check("OGS root directory", async () => {
-    const { existsSync } = await import("node:fs");
     if (!existsSync(OGS_ROOT)) throw new Error(`${OGS_ROOT} does not exist. Run: ogs install`);
     return OGS_ROOT;
   }));
@@ -235,7 +233,6 @@ async function cmdDoctor(): Promise<void> {
   }));
 
   checks.push(await check("Sandbox directory", async () => {
-    const { existsSync } = await import("node:fs");
     if (!existsSync(GEMINI_SANDBOX)) throw new Error("Sandbox not initialized");
     return GEMINI_SANDBOX;
   }));

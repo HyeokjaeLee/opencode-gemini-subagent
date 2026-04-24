@@ -1,18 +1,17 @@
-#!/usr/bin/env node
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+#!/usr/bin/env bun
+import { resolve } from "node:path";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const pluginPath = resolve(__dirname, "dist", "plugin.js");
+const pluginPath = resolve(import.meta.dir, "plugin.js");
 
 try {
-  const { syncBundledAgents } = await import("./dist/installer.js");
+  const { syncBundledAgents } = await import("./installer.js");
   const { copied } = syncBundledAgents();
   if (copied > 0) {
     console.log(`[ogs] seeded ${copied} bundled agent(s) to agents-gemini/`);
   }
-} catch (err) {
-  console.warn(`[ogs] could not seed bundled agents: ${err?.message ?? err}`);
+} catch (err: unknown) {
+  const errorMessage = err instanceof Error ? err.message : String(err);
+  console.warn(`[ogs] could not seed bundled agents: ${errorMessage}`);
 }
 
 console.log(`

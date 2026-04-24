@@ -9,13 +9,12 @@
   },
   "files": [
     "dist",
-    "agents",
-    "postinstall.mjs"
+    "agents"
   ],
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "tsc",
-    "postinstall": "node postinstall.mjs"
+    "postinstall": "bun run dist/postinstall.js"
   },
   "keywords": [
     "opencode",
@@ -43,14 +42,15 @@
     }
   },
   "engines": {
-    "node": ">=18.0.0"
+    "bun": ">=1.0.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/bun": "^1.3.13",
     "typescript": "^6.0.3"
   },
   "bugs": {
     "url": "https://github.com/HyeokjaeLee/opencode-gemini-subagent/issues"
   },
-  "homepage": "https://github.com/HyeokjaeLee/opencode-gemini-subagent#readme"
+  "homepage": "https://github.com/HyeokjaeLee/opencode-gemini-subagent#readme",
+  "types": "./dist/plugin.d.ts"
 }

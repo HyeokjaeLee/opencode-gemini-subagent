@@ -1,6 +1,5 @@
-import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import {
   GEMINI_BIN,
   GEMINI_HOME,
@@ -45,7 +44,7 @@ interface SpawnOpts {
 
 export function buildSandboxedEnv(extraEnv: Record<string, string> = {}): Record<string, string | undefined> {
   assertNotGlobal(GEMINI_SANDBOX);
-  const base: Record<string, string | undefined> = { ...process.env };
+  const base: Record<string, string | undefined> = { ...Bun.env };
   delete base.GEMINI_API_KEY_FILE;
   delete base.GOOGLE_APPLICATION_CREDENTIALS;
   base.HOME = GEMINI_SANDBOX;
@@ -69,68 +68,56 @@ export async function spawnGemini(argv: string[], opts: SpawnOpts = {}): Promise
   const timeoutMs = opts.timeoutMs ?? 180_000;
   const inheritStdio = opts.inheritStdio ?? false;
 
-  return await new Promise((resolve, reject) => {
-    const child = spawn(GEMINI_BIN, argv, {
-      cwd,
-      env,
-      stdio: inheritStdio
-        ? ["inherit", "inherit", "inherit"]
-        : ["pipe", "pipe", "pipe"],
-    });
+  const stdinInput = (!inheritStdio && opts.stdin !== undefined) ? opts.stdin : undefined;
 
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | null = null;
-
-    if (!inheritStdio) {
-      child.stdout?.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-      child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-    }
-
-    const onAbort = () => {
-      try {
-        child.kill("SIGTERM");
-      } catch (_e) { /* ignore */ }
-    };
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
-
-    killTimer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill("SIGTERM");
-      } catch (_e) { /* ignore */ }
-      setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch (_e) { /* ignore */ }
-      }, 5_000);
-    }, timeoutMs);
-
-    child.on("error", (err) => {
-      if (killTimer) clearTimeout(killTimer);
-      opts.signal?.removeEventListener("abort", onAbort);
-      reject(err);
-    });
-
-    child.on("close", (code) => {
-      if (killTimer) clearTimeout(killTimer);
-      opts.signal?.removeEventListener("abort", onAbort);
-      resolve({
-        exitCode: code ?? -1,
-        stdout,
-        stderr,
-        timedOut,
-        argv: [GEMINI_BIN, ...argv],
-      });
-    });
-
-    if (!inheritStdio && opts.stdin !== undefined) {
-      child.stdin?.end(opts.stdin);
-    } else if (!inheritStdio) {
-      child.stdin?.end();
-    }
+  const proc = Bun.spawn([GEMINI_BIN, ...argv], {
+    cwd,
+    env,
+    stdin: inheritStdio ? "inherit" : (stdinInput !== undefined ? new TextEncoder().encode(stdinInput) : "pipe"),
+    stdout: inheritStdio ? "inherit" : "pipe",
+    stderr: inheritStdio ? "inherit" : "pipe",
   });
+
+  let timedOut = false;
+  let killTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const onAbort = () => {
+    try { proc.kill(); } catch (_e) { /* ignore */ }
+  };
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+
+  killTimer = setTimeout(() => {
+    timedOut = true;
+    try { proc.kill(); } catch (_e) { /* ignore */ }
+    setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch (_e) { /* ignore */ }
+    }, 5_000);
+  }, timeoutMs);
+
+  let stdout = "";
+  let stderr = "";
+
+  if (!inheritStdio) {
+    const [stdoutText, stderrText] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    stdout = stdoutText;
+    stderr = stderrText;
+  }
+
+  await proc.exited;
+
+  if (killTimer) clearTimeout(killTimer);
+  opts.signal?.removeEventListener("abort", onAbort);
+
+  return {
+    exitCode: proc.exitCode ?? -1,
+    stdout,
+    stderr,
+    timedOut,
+    argv: [GEMINI_BIN, ...argv],
+  };
 }
 
 export async function runPrompt(options: RunOptions): Promise<RunResult> {
@@ -223,7 +210,7 @@ export async function getStatus(): Promise<GeminiStatus> {
   let authenticated = false;
   try {
     if (existsSync(GEMINI_OAUTH_CREDS_PATH)) {
-      const raw = await readFile(GEMINI_OAUTH_CREDS_PATH, "utf8");
+      const raw = await Bun.file(GEMINI_OAUTH_CREDS_PATH).text();
       const parsed = JSON.parse(raw) as { access_token?: string; refresh_token?: string };
       authenticated = Boolean(parsed?.access_token || parsed?.refresh_token);
     }
@@ -232,7 +219,7 @@ export async function getStatus(): Promise<GeminiStatus> {
   let mcpServers: string[] = [];
   try {
     if (existsSync(GEMINI_SETTINGS_PATH)) {
-      const raw = await readFile(GEMINI_SETTINGS_PATH, "utf8");
+      const raw = await Bun.file(GEMINI_SETTINGS_PATH).text();
       const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
       mcpServers = Object.keys(parsed?.mcpServers ?? {});
     }
@@ -250,7 +237,7 @@ export async function getStatus(): Promise<GeminiStatus> {
   try {
     const pkgPath = `${OGS_ROOT}/node_modules/@google/gemini-cli/package.json`;
     if (existsSync(pkgPath)) {
-      const raw = await readFile(pkgPath, "utf8");
+      const raw = await Bun.file(pkgPath).text();
       npmVersion = (JSON.parse(raw) as { version?: string }).version ?? null;
     }
   } catch (_e) { /* ignore */ }
@@ -276,7 +263,7 @@ export async function getStatus(): Promise<GeminiStatus> {
 export async function resetSandbox(): Promise<void> {
   assertNotGlobal(GEMINI_SANDBOX);
   if (existsSync(GEMINI_SANDBOX)) {
-    await rm(GEMINI_SANDBOX, { recursive: true, force: true });
+    rmSync(GEMINI_SANDBOX, { recursive: true, force: true });
   }
   await ensureSandbox();
 }

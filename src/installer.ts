@@ -1,11 +1,8 @@
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { OGS_ROOT, GEMINI_BIN, AGENTS_DIR } from "./paths.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BUNDLED_AGENTS_DIR = path.join(__dirname, "..", "agents");
+const BUNDLED_AGENTS_DIR = path.join(import.meta.dir, "..", "agents");
 
 const PACKAGE = "@google/gemini-cli";
 const UPDATE_CHECK_TTL_MS = 24 * 60 * 60_000;
@@ -40,11 +37,13 @@ export function getInstalledVersion(): string | null {
 
 export function getLatestVersion(): string | null {
   try {
-    const out = execSync(`npm view ${PACKAGE} version`, {
-      encoding: "utf8",
-      timeout: 15_000,
+    const result = Bun.spawnSync(["npm", "view", PACKAGE, "version"], {
+      cwd: OGS_ROOT,
+      env: Bun.env,
     });
-    return out.trim() || null;
+    if (!result.success || !result.stdout) return null;
+    const out = new TextDecoder().decode(result.stdout).trim();
+    return out || null;
   } catch (_e) {
     return null;
   }
@@ -69,21 +68,27 @@ function ensureRoot(): void {
       null,
       2,
     );
-    execSync(`cat > "${pj}" << 'OGSEOF'\n${minimal}\nOGSEOF`, {
-      stdio: "pipe",
-    });
+    writeFileSync(pj, minimal, "utf8");
   }
 }
 
 export function install(opts: { silent?: boolean } = {}): string {
   ensureRoot();
   const silent = opts.silent ?? false;
-  const stdio: "pipe" | "inherit" = silent ? "pipe" : "inherit";
+  const stdio: "inherit" | "ignore" = silent ? "ignore" : "inherit";
 
-  execSync(`npm install --prefix "${OGS_ROOT}" ${PACKAGE}`, {
-    stdio,
-    timeout: 120_000,
-  });
+  const result = Bun.spawnSync(
+    ["npm", "install", "--prefix", OGS_ROOT, PACKAGE],
+    {
+      stdio: ["ignore", stdio, stdio],
+      env: Bun.env,
+      timeout: 120_000,
+    },
+  );
+
+  if (!result.success) {
+    throw new Error(`npm install failed with exit code ${result.exitCode}`);
+  }
 
   if (!existsSync(GEMINI_BIN)) {
     throw new Error(
@@ -99,9 +104,9 @@ export function syncBundledAgents(): { copied: number } {
   if (!existsSync(BUNDLED_AGENTS_DIR)) return { copied: 0 };
   mkdirSync(AGENTS_DIR, { recursive: true });
   let copied = 0;
-  for (const f of readdirSync(BUNDLED_AGENTS_DIR)) {
-    if (!f.endsWith(".md")) continue;
-    copyFileSync(path.join(BUNDLED_AGENTS_DIR, f), path.join(AGENTS_DIR, f));
+  const glob = new Bun.Glob("*.md");
+  for (const match of glob.scanSync({ cwd: BUNDLED_AGENTS_DIR })) {
+    copyFileSync(path.join(BUNDLED_AGENTS_DIR, match), path.join(AGENTS_DIR, match));
     copied++;
   }
   return { copied };
@@ -126,11 +131,19 @@ export function updateIfNeeded(opts: { silent?: boolean } = {}): { updated: bool
   }
 
   const silent = opts.silent ?? false;
-  const stdio: "pipe" | "inherit" = silent ? "pipe" : "inherit";
-  execSync(`npm update --prefix "${OGS_ROOT}" ${PACKAGE}`, {
-    stdio,
-    timeout: 120_000,
-  });
+  const stdio: "inherit" | "ignore" = silent ? "ignore" : "inherit";
+  const result = Bun.spawnSync(
+    ["npm", "update", "--prefix", OGS_ROOT, PACKAGE],
+    {
+      stdio: ["ignore", stdio, stdio],
+      env: Bun.env,
+      timeout: 120_000,
+    },
+  );
+
+  if (!result.success) {
+    throw new Error(`npm update failed with exit code ${result.exitCode}`);
+  }
 
   const after = getInstalledVersion();
   return { updated: true, from: current, to: after ?? latest };

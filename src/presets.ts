@@ -1,7 +1,5 @@
-import { readdir, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import path from "node:path";
 import { AGENTS_DIR } from "./paths.js";
 import { runPrompt, runPromptBackground } from "./bridge.js";
 
@@ -80,7 +78,7 @@ function validateArgs(rawArgs: unknown): PresetArgSpec[] {
 }
 
 export async function parsePresetFile(filePath: string): Promise<GeminiPreset> {
-  const raw = await readFile(filePath, "utf8");
+  const raw = await Bun.file(filePath).text();
   const { yaml, body } = splitFrontmatter(raw);
 
   let fm: Record<string, unknown>;
@@ -142,21 +140,23 @@ export async function parsePresetFile(filePath: string): Promise<GeminiPreset> {
 }
 
 export async function loadPresets(): Promise<{ presets: GeminiPreset[]; errors: Array<{ file: string; message: string }> }> {
-  if (!existsSync(AGENTS_DIR)) {
+  if (!(await Bun.file(AGENTS_DIR).exists())) {
     return { presets: [], errors: [] };
   }
-  const entries = await readdir(AGENTS_DIR, { withFileTypes: true });
+
   const presets: GeminiPreset[] = [];
   const errors: Array<{ file: string; message: string }> = [];
-  for (const ent of entries) {
-    if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
-    const filePath = path.join(AGENTS_DIR, ent.name);
+
+  const glob = new Bun.Glob("*.md");
+  for await (const match of glob.scan({ cwd: AGENTS_DIR })) {
+    const filePath = path.join(AGENTS_DIR, match);
     try {
       presets.push(await parsePresetFile(filePath));
     } catch (err) {
       errors.push({ file: filePath, message: (err as Error)?.message ?? String(err) });
     }
   }
+
   presets.sort((a, b) => a.name.localeCompare(b.name));
   return { presets, errors };
 }
