@@ -48,14 +48,12 @@ export async function getLatestVersion(): Promise<string | null> {
   }
 }
 
-export function isInstalled(): boolean {
-  return existsSync(GEMINI_BIN);
+export async function isInstalled(): Promise<boolean> {
+  return Bun.file(GEMINI_BIN).exists();
 }
 
 async function ensureRoot(): Promise<void> {
-  if (!existsSync(OGS_ROOT)) {
-    await mkdir(OGS_ROOT, { recursive: true });
-  }
+  await mkdir(OGS_ROOT, { recursive: true });
   const pj = `${OGS_ROOT}/package.json`;
   if (!(await Bun.file(pj).exists())) {
     const minimal = JSON.stringify(
@@ -151,7 +149,7 @@ export async function updateIfNeeded(opts: { silent?: boolean } = {}): Promise<{
 
 export async function ensureInstalled(opts: { silent?: boolean } = {}): Promise<{ bin: string; version: string | null }> {
   await syncBundledAgents();
-  if (!isInstalled()) {
+  if (!(await isInstalled())) {
     const version = await install({ silent: opts.silent ?? true });
     return { bin: GEMINI_BIN, version };
   }

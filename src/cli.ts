@@ -218,7 +218,7 @@ async function cmdDoctor(): Promise<void> {
   }));
 
   checks.push(await check("Gemini CLI binary", async () => {
-    if (!isInstalled()) throw new Error(`${GEMINI_BIN} not found. Run: ogs install`);
+    if (!(await isInstalled())) throw new Error(`${GEMINI_BIN} not found. Run: ogs install`);
     return GEMINI_BIN;
   }));
 

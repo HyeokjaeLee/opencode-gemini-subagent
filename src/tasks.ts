@@ -1,5 +1,5 @@
 import { openSync } from "node:fs";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { TASKS_DIR } from "./paths.js";
 
@@ -160,7 +160,7 @@ function isTerminal(status: string): boolean {
 
 async function statBytes(p: string): Promise<number> {
   try {
-    const s = await stat(p);
+    const s = await Bun.file(p).stat();
     return s.size;
   } catch (_e) {
     return 0;

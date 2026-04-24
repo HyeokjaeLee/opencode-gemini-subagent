@@ -259,8 +259,6 @@ export async function getStatus(): Promise<GeminiStatus> {
 
 export async function resetSandbox(): Promise<void> {
   assertNotGlobal(GEMINI_SANDBOX);
-  if (existsSync(GEMINI_SANDBOX)) {
-    await rm(GEMINI_SANDBOX, { recursive: true, force: true });
-  }
+  await rm(GEMINI_SANDBOX, { recursive: true, force: true }).catch(() => {});
   await ensureSandbox();
 }

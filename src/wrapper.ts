@@ -1,14 +1,11 @@
 #!/usr/bin/env bun
 import {
   writeFileSync,
-  readFileSync,
   renameSync,
   fsyncSync,
   closeSync,
   openSync,
   existsSync,
-  statSync,
-  readSync,
 } from "node:fs";
 import path from "node:path";
 
@@ -43,29 +40,22 @@ function writeJsonAtomic(target: string, data: StateData): void {
   renameSync(tmp, target);
 }
 
-function readJson(target: string): StateData {
-  return JSON.parse(readFileSync(target, "utf8")) as StateData;
+async function readJson(target: string): Promise<StateData> {
+  return JSON.parse(await Bun.file(target).text()) as StateData;
 }
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function classifyTimeoutCause(stderrFilePath: string): string {
+async function classifyTimeoutCause(stderrFilePath: string): Promise<string> {
   try {
-    if (!existsSync(stderrFilePath)) return "unknown";
-    const s = statSync(stderrFilePath);
-    const size = s.size;
+    const f = Bun.file(stderrFilePath);
+    if (!(await f.exists())) return "unknown";
+    const size = f.size;
     if (size === 0) return "silent";
     const readBytes = Math.min(16384, size);
-    const buf = Buffer.alloc(readBytes);
-    const fd = openSync(stderrFilePath, "r");
-    try {
-      readSync(fd, buf, 0, readBytes, size - readBytes);
-    } finally {
-      closeSync(fd);
-    }
-    const tail = buf.toString("utf8");
+    const tail = await f.slice(size - readBytes, size).text();
     if (/MODEL_CAPACITY_EXHAUSTED|rateLimitExceeded|quota will reset after|RESOURCE_EXHAUSTED|status[:\s]+429/i.test(tail)) {
       return "rate_limit_backoff";
     }
@@ -78,10 +68,10 @@ function classifyTimeoutCause(stderrFilePath: string): string {
   }
 }
 
-function patchState(patch: StateData): void {
+async function patchState(patch: StateData): Promise<void> {
   let current: StateData = {};
   try {
-    current = readJson(statePath);
+    current = await readJson(statePath);
   } catch (_e) { /* ignore */ }
   writeJsonAtomic(statePath, { ...current, ...patch, updated_at: nowIso() });
 }
@@ -95,7 +85,7 @@ interface Spec {
   spawnedAt: string;
 }
 
-const spec = readJson(specPath) as unknown as Spec;
+const spec = (await readJson(specPath)) as unknown as Spec;
 const { argv, env, cwd, stdin, timeoutMs } = spec;
 
 const startedAt = nowIso();
@@ -108,7 +98,7 @@ const child = Bun.spawn(argv, {
   detached: true,
 });
 
-patchState({
+await patchState({
   status: "running",
   child_pid: child.pid,
   started_at: startedAt,
@@ -138,7 +128,7 @@ const cancelPoll = setInterval(() => {
   if (cancelRequested) return;
   if (existsSync(cancelPath)) {
     cancelRequested = true;
-    patchState({ cancel_requested_at: nowIso() });
+    patchState({ cancel_requested_at: nowIso() }).catch(() => {});
     try { process.kill(-child.pid!, "SIGTERM"); }
     catch (_e) { try { child.kill(); } catch (_e2) { /* ignore */ } }
     hardKillTimer = setTimeout(() => {
@@ -161,12 +151,9 @@ clearTimeout(softKillTimer);
 if (hardKillTimer) clearTimeout(hardKillTimer);
 clearInterval(cancelPoll);
 
-let stdoutText = "";
-try { stdoutText = readFileSync(stdoutPath, "utf8"); } catch (_e) { /* ignore */ }
+const stdoutText = await Bun.file(stdoutPath).text().catch(() => "");
 
-try {
-  writeFileSync(resultPath, stdoutText, { mode: 0o600 });
-} catch (_e) { /* ignore */ }
+await Bun.write(resultPath, stdoutText).catch(() => {});
 
 let status: string;
 if (cancelRequested) status = "cancelled";
@@ -174,9 +161,12 @@ else if (timedOut) status = "timeout";
 else if (child.exitCode === 0) status = "completed";
 else status = "failed";
 
-const timeoutCause = timedOut ? classifyTimeoutCause(stderrPath) : null;
+const timeoutCause = timedOut ? await classifyTimeoutCause(stderrPath) : null;
 
-patchState({
+const stdoutStat = await Bun.file(stdoutPath).stat().catch(() => null);
+const stderrStat = await Bun.file(stderrPath).stat().catch(() => null);
+
+await patchState({
   status,
   exit_code: child.exitCode,
   signal: null,
@@ -184,8 +174,8 @@ patchState({
   cancelled: cancelRequested,
   completed_at: nowIso(),
   result_path: resultPath,
-  stdout_bytes: existsSync(stdoutPath) ? statSync(stdoutPath).size : 0,
-  stderr_bytes: existsSync(stderrPath) ? statSync(stderrPath).size : 0,
+  stdout_bytes: stdoutStat?.size ?? 0,
+  stderr_bytes: stderrStat?.size ?? 0,
   timeout_cause: timeoutCause,
 });
 
