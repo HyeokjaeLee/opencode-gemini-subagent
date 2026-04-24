@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { OGS_ROOT, GEMINI_BIN, AGENTS_DIR } from "./paths.js";
 
@@ -8,27 +9,29 @@ const PACKAGE = "@google/gemini-cli";
 const UPDATE_CHECK_TTL_MS = 24 * 60 * 60_000;
 const UPDATE_CHECK_FILE = `${OGS_ROOT}/.last-update-check`;
 
-function getLastUpdateCheck(): number {
+async function getLastUpdateCheck(): Promise<number> {
   try {
-    if (existsSync(UPDATE_CHECK_FILE)) {
-      return Number(readFileSync(UPDATE_CHECK_FILE, "utf8").trim());
+    const f = Bun.file(UPDATE_CHECK_FILE);
+    if (await f.exists()) {
+      return Number((await f.text()).trim());
     }
   } catch (_e) { /* ignore */ }
   return 0;
 }
 
-function markUpdateCheck(): void {
+async function markUpdateCheck(): Promise<void> {
   try {
-    mkdirSync(OGS_ROOT, { recursive: true });
-    writeFileSync(UPDATE_CHECK_FILE, String(Date.now()), { mode: 0o644 });
+    await mkdir(OGS_ROOT, { recursive: true });
+    await Bun.write(UPDATE_CHECK_FILE, String(Date.now()));
   } catch (_e) { /* ignore */ }
 }
 
-export function getInstalledVersion(): string | null {
+export async function getInstalledVersion(): Promise<string | null> {
   try {
     const pkgPath = `${OGS_ROOT}/node_modules/${PACKAGE}/package.json`;
-    if (!existsSync(pkgPath)) return null;
-    const raw = readFileSync(pkgPath, "utf8");
+    const f = Bun.file(pkgPath);
+    if (!(await f.exists())) return null;
+    const raw = await f.text();
     return JSON.parse(raw).version ?? null;
   } catch (_e) {
     return null;
@@ -50,9 +53,9 @@ export function isInstalled(): boolean {
   return existsSync(GEMINI_BIN);
 }
 
-function ensureRoot(): void {
+async function ensureRoot(): Promise<void> {
   if (!existsSync(OGS_ROOT)) {
-    mkdirSync(OGS_ROOT, { recursive: true });
+    await mkdir(OGS_ROOT, { recursive: true });
   }
   const pj = `${OGS_ROOT}/package.json`;
   if (!existsSync(pj)) {
@@ -65,12 +68,12 @@ function ensureRoot(): void {
       null,
       2,
     );
-    writeFileSync(pj, minimal, "utf8");
+    await Bun.write(pj, minimal);
   }
 }
 
-export function install(opts: { silent?: boolean } = {}): string {
-  ensureRoot();
+export async function install(opts: { silent?: boolean } = {}): Promise<string> {
+  await ensureRoot();
   const silent = opts.silent ?? false;
   const stdio: "inherit" | "ignore" = silent ? "ignore" : "inherit";
 
@@ -93,35 +96,36 @@ export function install(opts: { silent?: boolean } = {}): string {
     );
   }
 
-  return getInstalledVersion()!;
+  return (await getInstalledVersion())!;
 }
 
-export function syncBundledAgents(): { copied: number } {
+export async function syncBundledAgents(): Promise<{ copied: number }> {
   if (existsSync(AGENTS_DIR)) return { copied: 0 };
   if (!existsSync(BUNDLED_AGENTS_DIR)) return { copied: 0 };
-  mkdirSync(AGENTS_DIR, { recursive: true });
+  await mkdir(AGENTS_DIR, { recursive: true });
   let copied = 0;
   const glob = new Bun.Glob("*.md");
   for (const match of glob.scanSync({ cwd: BUNDLED_AGENTS_DIR })) {
-    copyFileSync(path.join(BUNDLED_AGENTS_DIR, match), path.join(AGENTS_DIR, match));
+    const src = Bun.file(path.join(BUNDLED_AGENTS_DIR, match));
+    await Bun.write(path.join(AGENTS_DIR, match), src);
     copied++;
   }
   return { copied };
 }
 
 export async function updateIfNeeded(opts: { silent?: boolean } = {}): Promise<{ updated: boolean; from: string | null; to: string | null }> {
-  const current = getInstalledVersion();
+  const current = await getInstalledVersion();
   if (!current) {
-    const version = install(opts);
+    const version = await install(opts);
     return { updated: true, from: null, to: version };
   }
 
-  if (Date.now() - getLastUpdateCheck() < UPDATE_CHECK_TTL_MS) {
+  if (Date.now() - (await getLastUpdateCheck()) < UPDATE_CHECK_TTL_MS) {
     return { updated: false, from: current, to: current };
   }
 
   const latest = await getLatestVersion();
-  markUpdateCheck();
+  await markUpdateCheck();
 
   if (!latest || current === latest) {
     return { updated: false, from: current, to: latest ?? current };
@@ -142,21 +146,17 @@ export async function updateIfNeeded(opts: { silent?: boolean } = {}): Promise<{
     throw new Error(`bun update failed with exit code ${result.exitCode}`);
   }
 
-  const after = getInstalledVersion();
+  const after = await getInstalledVersion();
   return { updated: true, from: current, to: after ?? latest };
 }
 
-export function ensureInstalled(opts: { silent?: boolean } = {}): { bin: string; version: string | null } {
-  syncBundledAgents();
+export async function ensureInstalled(opts: { silent?: boolean } = {}): Promise<{ bin: string; version: string | null }> {
+  await syncBundledAgents();
   if (!isInstalled()) {
-    const version = install({ silent: opts.silent ?? true });
+    const version = await install({ silent: opts.silent ?? true });
     return { bin: GEMINI_BIN, version };
   }
 
-  try {
-    updateIfNeeded({ silent: opts.silent ?? true }).catch(() => {});
-    return { bin: GEMINI_BIN, version: getInstalledVersion() };
-  } catch (_e) {
-    return { bin: GEMINI_BIN, version: getInstalledVersion() };
-  }
+  updateIfNeeded({ silent: opts.silent ?? true }).catch(() => {});
+  return { bin: GEMINI_BIN, version: await getInstalledVersion() };
 }

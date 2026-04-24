@@ -4,7 +4,7 @@ import { install, updateIfNeeded, isInstalled, getInstalledVersion, getLatestVer
 import { listTasks, sweepOldTasks } from "./tasks.js";
 import { loadPresets } from "./presets.js";
 import { GEMINI_BIN, OGS_ROOT, GEMINI_SANDBOX, GEMINI_SETTINGS_PATH } from "./paths.js";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
@@ -72,7 +72,7 @@ async function cmdAuthReset(): Promise<void> {
 
 async function cmdInstall(): Promise<void> {
   console.log("Installing @google/gemini-cli in", OGS_ROOT);
-  const version = install({ silent: false });
+  const version = await install({ silent: false });
   console.log(`Installed: ${version}`);
 }
 
@@ -133,7 +133,7 @@ async function cmdMcp(): Promise<void> {
   }
 
   if (sub === "list") {
-    const settings = readSettings();
+    const settings = await readSettings();
     const servers = settings?.mcpServers ?? {};
     const names = Object.keys(servers);
     if (names.length === 0) {
@@ -162,13 +162,13 @@ async function cmdMcp(): Promise<void> {
       console.log("Usage: ogs mcp remove <name>");
       return;
     }
-    const settings = readSettings();
+    const settings = await readSettings();
     if (!settings.mcpServers?.[name]) {
       console.log(`MCP server "${name}" not found.`);
       return;
     }
     delete settings.mcpServers[name];
-    writeSettings(settings);
+    await writeSettings(settings);
     console.log(`Removed MCP server: ${name}`);
   } else if (sub === "auth") {
     const name = args[2];
@@ -185,21 +185,24 @@ async function cmdMcp(): Promise<void> {
   }
 }
 
-function readSettings(): SettingsFile {
+async function readSettings(): Promise<SettingsFile> {
   try {
-    if (existsSync(GEMINI_SETTINGS_PATH)) {
-      const raw = readFileSync(GEMINI_SETTINGS_PATH, "utf8");
+    const f = Bun.file(GEMINI_SETTINGS_PATH);
+    if (await f.exists()) {
+      const raw = await f.text();
       if (raw) return JSON.parse(raw) as SettingsFile;
     }
   } catch (_e) { /* ignore */ }
   return { security: { auth: { selectedType: "oauth-personal" } }, mcpServers: {} };
 }
 
-function writeSettings(settings: SettingsFile): void {
-  if (!existsSync(GEMINI_SETTINGS_PATH)) {
-    mkdirSync(path.dirname(GEMINI_SETTINGS_PATH), { recursive: true });
+async function writeSettings(settings: SettingsFile): Promise<void> {
+  const f = Bun.file(GEMINI_SETTINGS_PATH);
+  if (!(await f.exists())) {
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(path.dirname(GEMINI_SETTINGS_PATH), { recursive: true });
   }
-  Bun.write(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
+  await Bun.write(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 }
 
 async function cmdDoctor(): Promise<void> {
@@ -225,7 +228,7 @@ async function cmdDoctor(): Promise<void> {
   }));
 
   checks.push(await check("Gemini CLI version", async () => {
-    const current = getInstalledVersion();
+    const current = await getInstalledVersion();
     const latest = await getLatestVersion();
     if (!current) throw new Error("Cannot determine installed version");
     if (latest && current !== latest) return `${current} (latest: ${latest} — run: ogs update)`;

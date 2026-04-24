@@ -271,20 +271,13 @@ export async function readStderr(taskId: string): Promise<string> {
 }
 
 async function readTail(filePath: string, maxBytes: number): Promise<string> {
-  if (!(await Bun.file(filePath).exists())) return "";
   try {
-    const s = await stat(filePath);
-    const size = s.size;
+    const f = Bun.file(filePath);
+    if (!(await f.exists())) return "";
+    const size = f.size;
     if (size === 0) return "";
-    if (size <= maxBytes) return await Bun.file(filePath).text();
-    const fd = await (await import("node:fs/promises")).open(filePath, "r");
-    try {
-      const buf = Buffer.alloc(maxBytes);
-      await fd.read(buf, 0, maxBytes, size - maxBytes);
-      return buf.toString("utf8");
-    } finally {
-      await fd.close();
-    }
+    if (size <= maxBytes) return await f.text();
+    return await f.slice(size - maxBytes, size).text();
   } catch (_e) {
     return "";
   }

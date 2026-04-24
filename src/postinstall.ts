@@ -5,7 +5,7 @@ const pluginPath = resolve(import.meta.dir, "plugin.js");
 
 try {
   const { syncBundledAgents } = await import("./installer.js");
-  const { copied } = syncBundledAgents();
+  const { copied } = await syncBundledAgents();
   if (copied > 0) {
     console.log(`[ogs] seeded ${copied} bundled agent(s) to agents-gemini/`);
   }

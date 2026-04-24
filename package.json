@@ -1,6 +1,6 @@
 {
   "name": "opencode-gemini-subagent",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Delegate work to Gemini as an opencode subagent — built-in web search, background tasks, preset automation.",
   "type": "module",
   "main": "dist/plugin.js",
@@ -13,8 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "tsc",
-    "postinstall": "bun run dist/postinstall.js"
+    "prepublishOnly": "tsc"
   },
   "keywords": [
     "opencode",

@@ -56,7 +56,7 @@ export async function ensureSandbox(): Promise<void> {
 }
 
 export async function spawnGemini(argv: string[], opts: SpawnOpts = {}): Promise<RunResult> {
-  ensureInstalled({ silent: true });
+  await ensureInstalled({ silent: true });
   await ensureSandbox();
 
   const env = buildSandboxedEnv(opts.env);
