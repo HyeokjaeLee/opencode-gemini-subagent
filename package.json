@@ -1,6 +1,6 @@
 {
   "name": "opencode-gemini-subagent",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "Delegate work to Gemini as an opencode subagent — built-in web search, background tasks, preset automation.",
   "type": "module",
   "main": "dist/plugin.js",

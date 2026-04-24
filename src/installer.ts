@@ -21,7 +21,6 @@ async function getLastUpdateCheck(): Promise<number> {
 
 async function markUpdateCheck(): Promise<void> {
   try {
-    await mkdir(OGS_ROOT, { recursive: true });
     await Bun.write(UPDATE_CHECK_FILE, String(Date.now()));
   } catch (_e) { /* ignore */ }
 }
@@ -58,7 +57,7 @@ async function ensureRoot(): Promise<void> {
     await mkdir(OGS_ROOT, { recursive: true });
   }
   const pj = `${OGS_ROOT}/package.json`;
-  if (!existsSync(pj)) {
+  if (!(await Bun.file(pj).exists())) {
     const minimal = JSON.stringify(
       {
         name: "ogs-gemini-env",
@@ -90,7 +89,7 @@ export async function install(opts: { silent?: boolean } = {}): Promise<string> 
     throw new Error(`bun add failed with exit code ${result.exitCode}`);
   }
 
-  if (!existsSync(GEMINI_BIN)) {
+  if (!(await Bun.file(GEMINI_BIN).exists())) {
     throw new Error(
       `Installation completed but ${GEMINI_BIN} not found.`,
     );

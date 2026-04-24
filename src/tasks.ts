@@ -1,4 +1,4 @@
-import { existsSync, openSync } from "node:fs";
+import { openSync } from "node:fs";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { TASKS_DIR } from "./paths.js";

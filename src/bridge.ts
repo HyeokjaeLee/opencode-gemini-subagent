@@ -200,12 +200,13 @@ export interface GeminiStatus {
 }
 
 export async function getStatus(): Promise<GeminiStatus> {
-  const binExists = existsSync(GEMINI_BIN);
+  const binExists = await Bun.file(GEMINI_BIN).exists();
 
   let authenticated = false;
   try {
-    if (existsSync(GEMINI_OAUTH_CREDS_PATH)) {
-      const raw = await Bun.file(GEMINI_OAUTH_CREDS_PATH).text();
+    const credsFile = Bun.file(GEMINI_OAUTH_CREDS_PATH);
+    if (await credsFile.exists()) {
+      const raw = await credsFile.text();
       const parsed = JSON.parse(raw) as { access_token?: string; refresh_token?: string };
       authenticated = Boolean(parsed?.access_token || parsed?.refresh_token);
     }
@@ -213,8 +214,9 @@ export async function getStatus(): Promise<GeminiStatus> {
 
   let mcpServers: string[] = [];
   try {
-    if (existsSync(GEMINI_SETTINGS_PATH)) {
-      const raw = await Bun.file(GEMINI_SETTINGS_PATH).text();
+    const settingsFile = Bun.file(GEMINI_SETTINGS_PATH);
+    if (await settingsFile.exists()) {
+      const raw = await settingsFile.text();
       const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
       mcpServers = Object.keys(parsed?.mcpServers ?? {});
     }
@@ -231,8 +233,9 @@ export async function getStatus(): Promise<GeminiStatus> {
   let pkgVersion: string | null = null;
   try {
     const pkgPath = `${OGS_ROOT}/node_modules/@google/gemini-cli/package.json`;
-    if (existsSync(pkgPath)) {
-      const raw = await Bun.file(pkgPath).text();
+    const pkgFile = Bun.file(pkgPath);
+    if (await pkgFile.exists()) {
+      const raw = await pkgFile.text();
       pkgVersion = (JSON.parse(raw) as { version?: string }).version ?? null;
     }
   } catch (_e) { /* ignore */ }

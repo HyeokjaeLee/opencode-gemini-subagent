@@ -197,11 +197,6 @@ async function readSettings(): Promise<SettingsFile> {
 }
 
 async function writeSettings(settings: SettingsFile): Promise<void> {
-  const f = Bun.file(GEMINI_SETTINGS_PATH);
-  if (!(await f.exists())) {
-    const { mkdir } = await import("node:fs/promises");
-    await mkdir(path.dirname(GEMINI_SETTINGS_PATH), { recursive: true });
-  }
   await Bun.write(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 }
 
