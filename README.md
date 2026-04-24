@@ -17,7 +17,7 @@
 **2. OAuth 인증**
 
 ```bash
-npx ogs auth
+bunx ogs auth
 ```
 
 브라우저가 열리며 Google 계정 인증을 진행합니다.
@@ -25,7 +25,7 @@ npx ogs auth
 **3. 확인**
 
 ```bash
-npx ogs doctor
+bunx ogs doctor
 ```
 
 모든 항목이 통과하면 준비 완료입니다.
@@ -136,14 +136,14 @@ gemini({
 ## CLI
 
 ```bash
-npx ogs auth            # OAuth 인증
-npx ogs auth:reset      # 인증 초기화
-npx ogs status          # 전체 상태 확인
-npx ogs doctor          # 진단 검사
-npx ogs update          # Gemini CLI 업데이트
-npx ogs tasks           # 백그라운드 작업 목록
-npx ogs tasks clean     # 오래된 작업 정리
-npx ogs mcp list        # MCP 서버 목록
-npx ogs mcp add         # MCP 서버 추가
-npx ogs mcp remove <n>  # MCP 서버 제거
+bunx ogs auth            # OAuth 인증
+bunx ogs auth:reset      # 인증 초기화
+bunx ogs status          # 전체 상태 확인
+bunx ogs doctor          # 진단 검사
+bunx ogs update          # Gemini CLI 업데이트
+bunx ogs tasks           # 백그라운드 작업 목록
+bunx ogs tasks clean     # 오래된 작업 정리
+bunx ogs mcp list        # MCP 서버 목록
+bunx ogs mcp add         # MCP 서버 추가
+bunx ogs mcp remove <n>  # MCP 서버 제거
 ```

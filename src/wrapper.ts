@@ -105,6 +105,7 @@ const child = Bun.spawn(argv, {
   stdin: (typeof stdin === "string" && stdin.length > 0) ? new TextEncoder().encode(stdin) : "pipe",
   stdout: "pipe",
   stderr: "pipe",
+  detached: true,
 });
 
 patchState({
