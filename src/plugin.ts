@@ -1,6 +1,8 @@
-import type { ToolDefinition, ToolContext } from "@opencode-ai/plugin";
+import type { ToolDefinition, ToolContext, PluginHooks, PluginConfig } from "@opencode-ai/plugin";
 import { runPrompt, runPromptBackground, getStatus } from "./bridge.js";
 import { AGENTS_DIR } from "./paths.js";
+import { startGeminiOAuth } from "./auth.js";
+import { syncMcpServers } from "./mcp-adapter.js";
 import {
   loadPresets,
   runPreset,
@@ -488,7 +490,31 @@ export const GeminiSubagentPlugin = async () => {
     }),
   };
 
-  return { tool: tools };
+  return {
+    tool: tools,
+    auth: {
+      provider: "gemini-oauth",
+      loader(_getAuth: () => Promise<unknown>): Record<string, unknown> {
+        return {};
+      },
+      methods: [
+        {
+          label: "Gemini OAuth",
+          type: "oauth",
+          async authorize() {
+            const { url, instructions, callback } = await startGeminiOAuth();
+            return { url, instructions, method: "auto" as const, callback };
+          },
+        },
+      ],
+    },
+    async config(cfg: PluginConfig) {
+      const mcp = cfg.mcp ?? {}
+      if (Object.keys(mcp).length > 0 || cfg.mcp !== undefined) {
+        await syncMcpServers(mcp as Record<string, import("./mcp-adapter.js").OpenCodeMcpServer>)
+      }
+    },
+  };
 };
 
 export default GeminiSubagentPlugin;

@@ -2,9 +2,9 @@
 
 [opencode](https://opencode.ai) 플러그인 — Gemini를 서브에이전트로 활용하세요. 웹 검색 내장, 백그라운드 작업, 프리셋 자동화를 제공합니다.
 
-## 빠른 시작
+## 설치
 
-**1. opencode.json에 플러그인 추가**
+`opencode.json`에 플러그인을 추가하세요. 그게 전부입니다.
 
 ```json
 {
@@ -12,25 +12,43 @@
 }
 ```
 
-플러그인이 로드되면 Gemini CLI도 자동으로 설치됩니다.
+플러그인이 처음 로드될 때 Gemini CLI가 `~/.ogs/`에 자동으로 설치됩니다. 별도 설치 과정은 없습니다.
 
-**2. OAuth 인증**
+## 인증
 
-```bash
-bunx ogs auth
-```
-
-브라우저가 열리며 Google 계정 인증을 진행합니다.
-
-**3. 확인**
+opencode 내장 인증 시스템을 사용합니다.
 
 ```bash
-bunx ogs doctor
+opencode auth login
 ```
 
-모든 항목이 통과하면 준비 완료입니다.
+제공되는 목록에서 **Gemini OAuth**를 선택하면 브라우저가 열리고 Google 계정으로 인증을 진행합니다. 토큰은 `~/.ogs/sandbox/.gemini/oauth_creds.json`에 저장됩니다.
 
-## 사용법
+## MCP 서버
+
+opencode 설정에 정의된 MCP 서버를 Gemini CLI 설정으로 자동 동기화합니다. 별도로 관리할 필요가 없습니다.
+
+```json
+{
+  "plugin": ["opencode-gemini-subagent"],
+  "mcp": {
+    "figma": {
+      "type": "remote",
+      "url": "https://mcp.figma.com/mcp",
+      "enabled": true
+    },
+    "my-tool": {
+      "type": "local",
+      "command": ["npx", "my-mcp-server"],
+      "enabled": true
+    }
+  }
+}
+```
+
+remote(HTTP) 서버와 local(command) 서버 모두 지원합니다. `enabled: false`로 설정된 서버는 동기화에서 제외됩니다.
+
+## 도구
 
 플러그인은 opencode에 4개의 도구를 추가합니다:
 
@@ -39,7 +57,7 @@ bunx ogs doctor
 | `gemini` | Gemini에게 작업 위임. 동기 또는 백그라운드 실행 |
 | `gemini_result` | 백그라운드 작업의 결과 조회 |
 | `gemini_cancel` | 백그라운드 작업 취소 |
-| `gemini_status` | 설치, 인증, 프리셋 현황 확인 |
+| `gemini_status` | 설치, 인증, 프리셋, MCP, 백그라운드 작업 현황 확인 |
 
 ### Gemini에게 질문하기
 
@@ -133,17 +151,29 @@ gemini({
 
 프롬프트 본문에서 `{{name}}`으로 인자를 참조합니다.
 
-## CLI
+## ogs CLI에서 마이그레이션
 
-```bash
-bunx ogs auth            # OAuth 인증
-bunx ogs auth:reset      # 인증 초기화
-bunx ogs status          # 전체 상태 확인
-bunx ogs doctor          # 진단 검사
-bunx ogs update          # Gemini CLI 업데이트
-bunx ogs tasks           # 백그라운드 작업 목록
-bunx ogs tasks clean     # 오래된 작업 정리
-bunx ogs mcp list        # MCP 서버 목록
-bunx ogs mcp add         # MCP 서버 추가
-bunx ogs mcp remove <n>  # MCP 서버 제거
-```
+v0.2.0부터 독립 실행형 `ogs` CLI가 제거되었습니다. 플러그인 아키텍처로 전환되었습니다.
+
+### 변경 요약
+
+| 기존 (ogs CLI) | 현재 (플러그인) |
+|----------------|-----------------|
+| `bunx ogs auth` | `opencode auth login` → "Gemini OAuth" 선택 |
+| `bunx ogs status` | `gemini_status` 도구 호출 |
+| `bunx ogs doctor` | `gemini_status` 도구로 상태 확인 |
+| `bunx ogs mcp add` | `opencode.json`의 `mcp` 섹션에 직접 작성 |
+| `bunx ogs mcp remove` | `opencode.json`에서 해당 서버 삭제 |
+| `bunx ogs tasks` | `gemini_status`의 `tasks` 필드 확인 |
+| `bunx ogs update` | 플러그인 업데이트 시 Gemini CLI도 자동 갱신 |
+
+### 마이그레이션 절차
+
+1. `opencode.json`에 `"plugin": ["opencode-gemini-subagent"]` 추가
+2. `opencode auth login`으로 Gemini OAuth 재인증 (기존 토큰 경로가 동일하면 생략 가능)
+3. `opencode.json`의 `mcp` 섹션에 기존 MCP 서버 재작성
+4. 완료. `ogs` CLI는 더 이상 필요하지 않습니다.
+
+## 라이선스
+
+MIT

@@ -174,14 +174,6 @@ export async function runPromptBackground(options: RunOptions & { meta?: Record<
   });
 }
 
-export async function runInteractive(argv: string[], opts: { cwd?: string; timeoutMs?: number; env?: Record<string, string> } = {}): Promise<RunResult> {
-  return await spawnGemini(argv, {
-    ...opts,
-    inheritStdio: true,
-    timeoutMs: opts.timeoutMs ?? 10 * 60_000,
-  });
-}
-
 export interface GeminiStatus {
   ogsRoot: string;
   sandbox: string;
