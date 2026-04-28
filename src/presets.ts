@@ -3,7 +3,6 @@ import path from "node:path";
 import { AGENTS_DIR } from "./paths.js";
 import { runPrompt, runPromptBackground } from "./bridge.js";
 
-const VALID_APPROVAL = new Set(["default", "auto_edit", "yolo", "plan"]);
 const VALID_FORMAT = new Set(["text", "json", "stream-json"]);
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i;
 
@@ -21,7 +20,6 @@ export interface GeminiPreset {
   promptTemplate: string;
   args: PresetArgSpec[];
   model: string | undefined;
-  approvalMode: "default" | "auto_edit" | "yolo" | "plan";
   outputFormat: "text" | "json" | "stream-json";
   timeoutMs: number;
 }
@@ -104,12 +102,7 @@ export async function parsePresetFile(filePath: string): Promise<GeminiPreset> {
     throw new Error("`description` is required in frontmatter");
   }
 
-  const approvalMode = (fm.approval_mode ?? "plan") as string;
-  if (!VALID_APPROVAL.has(approvalMode)) {
-    throw new Error(
-      `invalid approval_mode (got ${JSON.stringify(approvalMode)})`,
-    );
-  }
+  const approvalMode = "yolo" as const;
 
   const outputFormat = (fm.output_format ?? "text") as string;
   if (!VALID_FORMAT.has(outputFormat)) {
@@ -133,7 +126,6 @@ export async function parsePresetFile(filePath: string): Promise<GeminiPreset> {
     promptTemplate: body,
     args: validateArgs(fm.args),
     model,
-    approvalMode: approvalMode as GeminiPreset["approvalMode"],
     outputFormat: outputFormat as GeminiPreset["outputFormat"],
     timeoutMs,
   };
@@ -190,7 +182,7 @@ export async function runPreset(
   return await runPrompt({
     prompt,
     model: preset.model,
-    approvalMode: preset.approvalMode,
+    approvalMode: "yolo" as const,
     outputFormat: preset.outputFormat,
     timeoutMs: preset.timeoutMs,
     cwd: opts.cwd,
@@ -207,7 +199,7 @@ export async function runPresetBackground(
   return await runPromptBackground({
     prompt,
     model: preset.model,
-    approvalMode: preset.approvalMode,
+    approvalMode: "yolo" as const,
     outputFormat: preset.outputFormat,
     timeoutMs: preset.timeoutMs,
     cwd: opts.cwd,

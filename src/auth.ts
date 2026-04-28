@@ -9,7 +9,36 @@ import { ensureSandbox } from "./bridge.js"
 import { ensureInstalled } from "./installer.js"
 
 const CLIENT_ID =
-  "764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com"
+  process.env.GEMINI_OAUTH_CLIENT_ID ?? ""
+const CLIENT_SECRET = process.env.GEMINI_OAUTH_CLIENT_SECRET ?? ""
+
+async function readSecretsFromGeminiBundle(): Promise<void> {
+  if (CLIENT_ID && CLIENT_SECRET) return
+  try {
+    const glob = new Bun.Glob("*.js")
+    const bundleDir = path.join(
+      path.dirname(await import.meta.resolve("@google/gemini-cli/package.json")).replace("file://", ""),
+      "bundle",
+    )
+    for await (const f of glob.scan({ cwd: bundleDir })) {
+      const text = await Bun.file(path.join(bundleDir, f)).text()
+      const idMatch = text.match(/OAUTH_CLIENT_ID\s*=\s*"([\w-]+\.apps\.googleusercontent\.com)"/)
+      const secretMatch = text.match(/OAUTH_CLIENT_SECRET\s*=\s*"(GOCSPX-[\w-]+)"/)
+      if (idMatch?.[1] && secretMatch?.[1]) {
+        if (!CLIENT_ID) (globalThis as Record<string, unknown>).__GEMINI_CLIENT_ID = idMatch[1]
+        if (!CLIENT_SECRET) (globalThis as Record<string, unknown>).__GEMINI_CLIENT_SECRET = secretMatch[1]
+        return
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+function getClientId(): string {
+  return CLIENT_ID || (globalThis as Record<string, unknown>).__GEMINI_CLIENT_ID as string || ""
+}
+function getClientSecret(): string {
+  return CLIENT_SECRET || (globalThis as Record<string, unknown>).__GEMINI_CLIENT_SECRET as string || ""
+}
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 const TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -181,6 +210,7 @@ function htmlResponse(html: string, status: number): Response {
 export async function startGeminiOAuth(): Promise<OAuthFlowResult> {
   await ensureInstalled({ silent: true })
   await ensureSandbox()
+  await readSecretsFromGeminiBundle()
 
   const codeVerifier = generateCodeVerifier()
   const codeChallenge = await computeCodeChallenge(codeVerifier)
@@ -225,7 +255,8 @@ export async function startGeminiOAuth(): Promise<OAuthFlowResult> {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
             code,
-            client_id: CLIENT_ID,
+            client_id: getClientId(),
+            client_secret: getClientSecret(),
             code_verifier: codeVerifier,
             grant_type: "authorization_code",
             redirect_uri: `http://127.0.0.1:${server.port}/callback`,
@@ -274,7 +305,7 @@ export async function startGeminiOAuth(): Promise<OAuthFlowResult> {
   const redirectUri = `http://127.0.0.1:${server.port}/callback`
 
   const authParams = new URLSearchParams({
-    client_id: CLIENT_ID,
+    client_id: getClientId(),
     redirect_uri: redirectUri,
     response_type: "code",
     scope: SCOPES,

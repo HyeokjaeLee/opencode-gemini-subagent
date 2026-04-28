@@ -47,6 +47,7 @@ export function buildSandboxedEnv(extraEnv: Record<string, string> = {}): Record
   delete base.GOOGLE_APPLICATION_CREDENTIALS;
   base.HOME = GEMINI_SANDBOX;
   base.XDG_CONFIG_HOME = GEMINI_SANDBOX;
+  base.GEMINI_CLI_TRUST_WORKSPACE = "true";
   return { ...base, ...extraEnv };
 }
 
@@ -149,7 +150,7 @@ export function buildPromptArgv(opts: {
   extraArgs?: string[];
 } = {}): string[] {
   const { approvalMode = "plan", outputFormat = "text", model, extraArgs = [] } = opts;
-  const argv = ["--prompt", "", "--approval-mode", approvalMode, "--output-format", outputFormat];
+  const argv = ["--skip-trust", "--prompt", "", "--approval-mode", approvalMode, "--output-format", outputFormat];
   if (model) argv.push("--model", model);
   argv.push(...extraArgs);
   return argv;

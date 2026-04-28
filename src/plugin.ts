@@ -1,4 +1,5 @@
-import type { ToolDefinition, ToolContext, PluginHooks, PluginConfig } from "@opencode-ai/plugin";
+import type { Plugin, Hooks, Config, ToolContext, AuthOAuthResult } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
 import { runPrompt, runPromptBackground, getStatus } from "./bridge.js";
 import { AGENTS_DIR } from "./paths.js";
 import { startGeminiOAuth } from "./auth.js";
@@ -21,54 +22,51 @@ import {
 } from "./tasks.js";
 import { formatSkillsContext } from "./skills.js";
 
-const { tool } = await import("@opencode-ai/plugin").catch(() => {
-  throw new Error(
-    "@opencode-ai/plugin not found. This plugin must be loaded from within opencode.",
-  );
-});
-
-const APPROVAL_MODES = ["default", "auto_edit", "yolo", "plan"] as const;
 const OUTPUT_FORMATS = ["text", "json", "stream-json"] as const;
 const CONSULT = "consult";
 
-interface SyncResult {
-  output: string;
-  metadata: Record<string, unknown>;
+const MAX_RESULT_BYTES = 100 * 1024;
+
+function tailBytes(text: string, maxBytes = 4096): string {
+  if (!text) return "";
+  const buf = Buffer.from(text, "utf8");
+  if (buf.byteLength <= maxBytes) return text;
+  return "…" + buf.subarray(buf.byteLength - maxBytes).toString("utf8");
 }
 
-function formatSyncResult(result: { timedOut: boolean; exitCode: number; stdout: string; stderr: string }): SyncResult {
+function limitResult(text: string, maxBytes = MAX_RESULT_BYTES): string {
+  if (!text) return "";
+  const buf = Buffer.from(text, "utf8");
+  if (buf.byteLength <= maxBytes) return text;
+  return buf.subarray(0, maxBytes).toString("utf8") + `\n\n... (truncated at ${maxBytes} bytes)`;
+}
+
+function formatSyncResult(result: { timedOut: boolean; exitCode: number; stdout: string; stderr: string }): string {
   if (result.timedOut) {
-    return {
-      output: `Gemini timed out.\n\nPartial stdout:\n${limitResult(result.stdout)}\n\nStderr:\n${limitResult(result.stderr)}`,
-      metadata: { timedOut: true },
-    };
+    return (
+      `Gemini timed out.\n\nPartial stdout:\n${limitResult(result.stdout)}\n\nStderr:\n${limitResult(result.stderr)}`
+    );
   }
   if (result.exitCode !== 0) {
-    return {
-      output: `Gemini exited with code ${result.exitCode}.\n\nStdout:\n${limitResult(result.stdout)}\n\nStderr:\n${limitResult(result.stderr)}`,
-      metadata: { exitCode: result.exitCode, failed: true },
-    };
+    return (
+      `Gemini exited with code ${result.exitCode}.\n\nStdout:\n${limitResult(result.stdout)}\n\nStderr:\n${limitResult(result.stderr)}`
+    );
   }
-  return {
-    output: limitResult(result.stdout).trim() || "(empty response)",
-    metadata: { exitCode: 0 },
-  };
+  return limitResult(result.stdout).trim() || "(empty response)";
 }
 
-function formatBgHandoff(handoff: { task_id: string }, subagent: string): SyncResult {
-  return {
-    output:
-      `Background task launched.\n\n` +
-      `task_id: ${handoff.task_id}\n` +
-      `subagent: ${subagent}\n\n` +
-      `The task runs under its preset's execution budget (see gemini_status).\n` +
-      `Poll with gemini_result({ task_id, block?: true, timeout_ms? }). ` +
-      `timeout_ms here is the WAIT budget for this single poll, not the task's ` +
-      `execution budget. If the wait deadline hits first, you get ` +
-      `status="still_running" with progress info — the task keeps going.\n` +
-      `Cancel with gemini_cancel({ task_id }).`,
-    metadata: { task_id: handoff.task_id, subagent, backgrounded: true },
-  };
+function formatBgHandoff(handoff: { task_id: string }, subagent: string): string {
+  return (
+    `Background task launched.\n\n` +
+    `task_id: ${handoff.task_id}\n` +
+    `subagent: ${subagent}\n\n` +
+    `The task runs under its preset's execution budget (see gemini_status).\n` +
+    `Poll with gemini_result({ task_id, block?: true, timeout_ms? }). ` +
+    `timeout_ms here is the WAIT budget for this single poll, not the task's ` +
+    `execution budget. If the wait deadline hits first, you get ` +
+    `status="still_running" with progress info — the task keeps going.\n` +
+    `Cancel with gemini_cancel({ task_id }).`
+  );
 }
 
 function buildExampleCall(preset: GeminiPreset): string {
@@ -88,8 +86,9 @@ function buildExampleCall(preset: GeminiPreset): string {
   return lines.join("\n");
 }
 
-function buildPresetArgs(presetsByName: Map<string, GeminiPreset>): Record<string, ReturnType<typeof tool.schema.string>> {
-  const presetArgs: Record<string, ReturnType<typeof tool.schema.string>> = {};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildPresetArgs(presetsByName: Map<string, GeminiPreset>): Record<string, any> {
+  const presetArgs: Record<string, any> = {};
   const seen = new Set<string>();
   for (const [, preset] of presetsByName) {
     for (const spec of preset.args) {
@@ -106,7 +105,7 @@ function buildPresetArgs(presetsByName: Map<string, GeminiPreset>): Record<strin
   return presetArgs;
 }
 
-function buildGeminiTool(presetsByName: Map<string, GeminiPreset>): ToolDefinition {
+function buildGeminiTool(presetsByName: Map<string, GeminiPreset>) {
   const presetNames = Array.from(presetsByName.keys());
   const subagentList = [CONSULT, ...presetNames].join(", ");
 
@@ -155,10 +154,6 @@ function buildGeminiTool(presetsByName: Map<string, GeminiPreset>): ToolDefiniti
           '"gemini-2.5-flash": balanced (~10s), stable, good for general-purpose prompts. ' +
           'Omit to use the default model.',
         ),
-      approval_mode: tool.schema
-        .enum(APPROVAL_MODES as unknown as [string, ...string[]])
-        .optional()
-        .describe('Approval policy (consult only). Default "plan" = read-only.'),
       output_format: tool.schema
         .enum(OUTPUT_FORMATS as unknown as [string, ...string[]])
         .optional()
@@ -176,16 +171,13 @@ function buildGeminiTool(presetsByName: Map<string, GeminiPreset>): ToolDefiniti
         .describe("Working directory. Defaults to the opencode session directory."),
       ...buildPresetArgs(presetsByName),
     },
-    async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<{ output: string; metadata: Record<string, unknown> }> {
+    async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
       const subagent = (args.subagent ?? CONSULT) as string;
       const background = args.background === true;
       const cwd = (args.cwd as string) ?? ctx.directory;
 
       if (subagent !== CONSULT && !presetsByName.has(subagent)) {
-        return {
-          output: `Unknown subagent "${subagent}". Available: ${subagentList}`,
-          metadata: { failed: true, reason: "unknown_subagent" },
-        };
+        return `Unknown subagent "${subagent}". Available: ${subagentList}`;
       }
 
       let prompt = args.prompt as string;
@@ -198,15 +190,12 @@ function buildGeminiTool(presetsByName: Map<string, GeminiPreset>): ToolDefiniti
 
       if (subagent === CONSULT) {
         if (typeof args.prompt !== "string" || args.prompt.length === 0) {
-          return {
-            output: 'subagent="consult" requires a non-empty prompt.',
-            metadata: { failed: true, reason: "missing_prompt" },
-          };
+          return 'subagent="consult" requires a non-empty prompt.';
         }
         const common = {
           prompt: prompt!,
           model: args.model as string | undefined,
-          approvalMode: (args.approval_mode as "default" | "auto_edit" | "yolo" | "plan" | undefined) ?? "plan",
+          approvalMode: "yolo" as const,
           outputFormat: (args.output_format as "text" | "json" | "stream-json" | undefined) ?? "text",
           timeoutMs: args.timeout_ms as number | undefined,
           cwd,
@@ -221,7 +210,7 @@ function buildGeminiTool(presetsByName: Map<string, GeminiPreset>): ToolDefiniti
         }
         const res = await runPrompt({ ...common, signal: ctx.abort });
         ctx.metadata({
-          title: `gemini/consult (${args.model ?? "default"}, ${common.approvalMode})`,
+          title: `gemini/consult (${args.model ?? "default"})`,
           metadata: { exitCode: res.exitCode, timedOut: res.timedOut },
         });
         return formatSyncResult(res);
@@ -243,34 +232,15 @@ function buildGeminiTool(presetsByName: Map<string, GeminiPreset>): ToolDefiniti
         }
         const res = await runPreset(preset, presetArgs, { cwd, signal: ctx.abort });
         ctx.metadata({
-          title: `gemini/${preset.name} (${preset.model ?? "default"}, ${preset.approvalMode})`,
+          title: `gemini/${preset.name} (${preset.model ?? "default"})`,
           metadata: { preset: preset.name, exitCode: res.exitCode, timedOut: res.timedOut },
         });
         return formatSyncResult(res);
       } catch (err) {
-        return {
-          output: `Subagent "${subagent}" failed: ${(err as Error)?.message ?? err}`,
-          metadata: { failed: true, subagent },
-        };
+        return `Subagent "${subagent}" failed: ${(err as Error)?.message ?? err}`;
       }
     },
   });
-}
-
-const MAX_RESULT_BYTES = 100 * 1024;
-
-function tailBytes(text: string, maxBytes = 4096): string {
-  if (!text) return "";
-  const buf = Buffer.from(text, "utf8");
-  if (buf.byteLength <= maxBytes) return text;
-  return "…" + buf.subarray(buf.byteLength - maxBytes).toString("utf8");
-}
-
-function limitResult(text: string, maxBytes = MAX_RESULT_BYTES): string {
-  if (!text) return "";
-  const buf = Buffer.from(text, "utf8");
-  if (buf.byteLength <= maxBytes) return text;
-  return buf.subarray(0, maxBytes).toString("utf8") + `\n\n... (truncated at ${maxBytes} bytes)`;
 }
 
 const geminiResultTool = tool({
@@ -305,7 +275,7 @@ const geminiResultTool = tool({
       .optional()
       .describe("If true, include the last ~4KB of stdout/stderr in the response."),
   },
-  async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<{ output: string; metadata: Record<string, unknown> }> {
+  async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
     const block = args.block === true;
     const taskId = args.task_id as string;
     const snapPeek = await inspectTask(taskId);
@@ -316,23 +286,26 @@ const geminiResultTool = tool({
       : { ...snapPeek, deadline_hit: false };
 
     if (snap.status === "unknown") {
-      return {
-        output: `Unknown task_id: ${taskId}`,
-        metadata: { failed: true, reason: "unknown_task" },
-      };
+      return `Unknown task_id: ${taskId}`;
     }
 
     const terminal = snap.status === "completed" || snap.status === "failed" || snap.status === "cancelled" || snap.status === "timeout";
-    const stillRunning = !terminal;
 
-    let body = "";
-    let output = "";
-    const metadata: Record<string, unknown> = { ...snap, task_id: taskId };
+    ctx.metadata({
+      title: `gemini_result ${taskId} [${snap.status}]`,
+      metadata: {
+        task_id: taskId,
+        status: snap.status,
+        elapsed_ms: snap.elapsed_ms,
+        stillRunning: !terminal,
+        deadline_hit: snap.deadline_hit ?? false,
+      },
+    });
 
     if (terminal) {
       const result = await readResult(taskId);
       const stderr = await readStderr(taskId);
-      body = limitResult(result ?? "");
+      const body = limitResult(result ?? "");
       const headerBits = [
         `status: ${snap.status}`,
         `exit: ${snap.exit_code ?? "?"}`,
@@ -342,7 +315,7 @@ const geminiResultTool = tool({
         headerBits.push(`timeout_cause: ${snap.timeout_cause}`);
       }
       const header = headerBits.join(" | ");
-      output = [header, "", body.trim() || "(empty stdout)"].join("\n");
+      let output = [header, "", body.trim() || "(empty stdout)"].join("\n");
       if (snap.status === "timeout" && snap.timeout_cause === "rate_limit_backoff") {
         output +=
           "\n\nNOTE: The task hit its execution budget while Gemini CLI was retrying a " +
@@ -351,54 +324,45 @@ const geminiResultTool = tool({
           "or retrying after a short delay.";
       }
       if (snap.status !== "completed") output += `\n\n---stderr---\n${tailBytes(stderr)}`;
-    } else {
-      const reportedStatus = snap.orphaned ? "orphaned" : "still_running";
-      metadata.status = reportedStatus;
-      const retryBits: string[] = [];
-      if (snap.retry_state) {
-        retryBits.push(
-          `retry_state: ${snap.retry_state} (${snap.retry_reason ?? "unknown"})` +
-            (snap.retry_wait_ms != null ? `, backing off ~${snap.retry_wait_ms}ms` : ""),
-        );
-      }
-      const lines = [
-        `status: ${reportedStatus}`,
-        `task_id: ${taskId}`,
-        `subagent: ${snap.subagent ?? "(unknown)"}`,
-        `elapsed_ms: ${snap.elapsed_ms ?? "?"}`,
-        snap.remaining_execution_ms != null
-          ? `remaining_execution_ms: ${snap.remaining_execution_ms} (task kill budget; separate from this wait)`
-          : "",
-        `stdout_bytes: ${snap.stdout_bytes ?? 0}`,
-        `stderr_bytes: ${snap.stderr_bytes ?? 0}`,
-        ...retryBits,
-        snap.deadline_hit ? `NOTE: wait deadline (${effectiveTimeoutMs}ms) hit before completion. Task is still running.` : "",
-        snap.orphaned
-          ? "WARNING: wrapper process is no longer alive. Task is orphaned; cancel or re-run."
-          : "",
-        "",
-        "Call gemini_result again with a longer timeout_ms, or gemini_cancel to stop.",
-      ].filter(Boolean);
-      output = lines.join("\n");
-
-      if (args.include_tail) {
-        const [so, se] = await Promise.all([readResult(taskId), readStderr(taskId)]);
-        output += `\n\n---stdout tail---\n${tailBytes(so ?? "")}`;
-        output += `\n\n---stderr tail---\n${tailBytes(se)}`;
-      }
+      return output;
     }
 
-    ctx.metadata({
-      title: `gemini_result ${taskId} [${metadata.status}]`,
-      metadata: {
-        task_id: taskId,
-        status: metadata.status,
-        elapsed_ms: snap.elapsed_ms,
-        stillRunning,
-        deadline_hit: snap.deadline_hit ?? false,
-      },
-    });
-    return { output, metadata };
+    const reportedStatus = snap.orphaned ? "orphaned" : "still_running";
+    const retryBits: string[] = [];
+    if (snap.retry_state) {
+      retryBits.push(
+        `retry_state: ${snap.retry_state} (${snap.retry_reason ?? "unknown"})` +
+          (snap.retry_wait_ms != null ? `, backing off ~${snap.retry_wait_ms}ms` : ""),
+      );
+    }
+    const lines = [
+      `status: ${reportedStatus}`,
+      `task_id: ${taskId}`,
+      `subagent: ${snap.subagent ?? "(unknown)"}`,
+      `elapsed_ms: ${snap.elapsed_ms ?? "?"}`,
+      snap.remaining_execution_ms != null
+        ? `remaining_execution_ms: ${snap.remaining_execution_ms} (task kill budget; separate from this wait)`
+        : "",
+      `stdout_bytes: ${snap.stdout_bytes ?? 0}`,
+      `stderr_bytes: ${snap.stderr_bytes ?? 0}`,
+      ...retryBits,
+      snap.deadline_hit ? `NOTE: wait deadline (${effectiveTimeoutMs}ms) hit before completion. Task is still running.` : "",
+      snap.orphaned
+        ? "WARNING: wrapper process is no longer alive. Task is orphaned; cancel or re-run."
+        : "",
+      "",
+      "Call gemini_result again with a longer timeout_ms, or gemini_cancel to stop.",
+    ].filter(Boolean);
+
+    let output = lines.join("\n");
+
+    if (args.include_tail) {
+      const [so, se] = await Promise.all([readResult(taskId), readStderr(taskId)]);
+      output += `\n\n---stdout tail---\n${tailBytes(so ?? "")}`;
+      output += `\n\n---stderr tail---\n${tailBytes(se)}`;
+    }
+
+    return output;
   },
 });
 
@@ -409,31 +373,67 @@ const geminiCancelTool = tool({
   args: {
     task_id: tool.schema.string().min(1).describe("Task id to cancel."),
   },
-  async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<{ output: string; metadata: Record<string, unknown> }> {
+  async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
     const taskId = args.task_id as string;
     const snap = await cancelTask(taskId);
     if (snap.status === "unknown") {
-      return {
-        output: `Unknown task_id: ${taskId}`,
-        metadata: { failed: true, reason: "unknown_task" },
-      };
+      return `Unknown task_id: ${taskId}`;
     }
     ctx.metadata({
       title: `gemini_cancel ${taskId} [${snap.status}]`,
       metadata: { task_id: taskId, status: snap.status },
     });
-    return {
-      output:
-        `status: ${snap.status}\n` +
-        `elapsed_ms: ${snap.elapsed_ms ?? "?"}\n` +
-        `exit_code: ${snap.exit_code ?? "-"}\n` +
-        `signal: ${snap.signal ?? "-"}`,
-      metadata: snap as unknown as Record<string, unknown>,
-    };
+    return (
+      `status: ${snap.status}\n` +
+      `elapsed_ms: ${snap.elapsed_ms ?? "?"}\n` +
+      `exit_code: ${snap.exit_code ?? "-"}\n` +
+      `signal: ${snap.signal ?? "-"}`
+    );
   },
 });
 
-export const GeminiSubagentPlugin = async () => {
+const geminiStatusTool = tool({
+  description:
+    "Report installation, auth, MCP, preset, and background task status of the isolated Gemini bridge. " +
+    "Use this to discover available presets, their args, and how to call them (via example_call). " +
+    "Use this first if any gemini_* tool fails, to verify the sandbox is set up.",
+  args: {},
+  async execute(_args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+    const [s, tasks, { presets, errors }] = await Promise.all([
+      getStatus(),
+      listTasks(),
+      loadPresets(),
+    ]);
+    const full = {
+      ...s,
+      agentsDir: AGENTS_DIR,
+      presets: presets.map((p) => ({
+        name: p.name,
+        description: p.description,
+        model: p.model,
+        timeoutMs: p.timeoutMs,
+        args: p.args,
+        filePath: p.filePath,
+        example_call: buildExampleCall(p),
+      })),
+      presetLoadErrors: errors,
+      tasks,
+    };
+    ctx.metadata({
+      title: "gemini bridge status",
+      metadata: {
+        authenticated: s.authenticated,
+        binExists: s.binExists,
+        mcpServerCount: s.mcpServers.length,
+        presetCount: presets.length,
+        taskCount: tasks.length,
+      },
+    });
+    return JSON.stringify(full, null, 2);
+  },
+});
+
+const GeminiSubagentPlugin: Plugin = async (input) => {
   const { presets, errors } = await loadPresets();
   if (errors.length > 0) {
     for (const e of errors) {
@@ -447,74 +447,39 @@ export const GeminiSubagentPlugin = async () => {
 
   const presetsByName = new Map(presets.map((p) => [p.name, p]));
 
-  const tools = {
-    gemini: buildGeminiTool(presetsByName),
-    gemini_result: geminiResultTool,
-    gemini_cancel: geminiCancelTool,
-    gemini_status: tool({
-      description:
-        "Report installation, auth, MCP, preset, and background task status of the isolated Gemini bridge. " +
-        "Use this to discover available presets, their args, and how to call them (via example_call). " +
-        "Use this first if any gemini_* tool fails, to verify the sandbox is set up.",
-      args: {},
-      async execute(_args: Record<string, unknown>, ctx: ToolContext): Promise<{ output: string }> {
-        const [s, tasks] = await Promise.all([getStatus(), listTasks()]);
-        const full = {
-          ...s,
-          agentsDir: AGENTS_DIR,
-          presets: presets.map((p) => ({
-            name: p.name,
-            description: p.description,
-            model: p.model,
-            approvalMode: p.approvalMode,
-            timeoutMs: p.timeoutMs,
-            args: p.args,
-            filePath: p.filePath,
-            example_call: buildExampleCall(p),
-          })),
-          presetLoadErrors: errors,
-          tasks,
-        };
-        ctx.metadata({
-          title: "gemini bridge status",
-          metadata: {
-            authenticated: s.authenticated,
-            binExists: s.binExists,
-            mcpServerCount: s.mcpServers.length,
-            presetCount: presets.length,
-            taskCount: tasks.length,
-          },
-        });
-        return { output: JSON.stringify(full, null, 2) };
-      },
-    }),
-  };
-
-  return {
-    tool: tools,
+  const hooks: Hooks = {
+    tool: {
+      gemini: buildGeminiTool(presetsByName),
+      gemini_result: geminiResultTool,
+      gemini_cancel: geminiCancelTool,
+      gemini_status: geminiStatusTool,
+    },
     auth: {
       provider: "gemini-oauth",
-      loader(_getAuth: () => Promise<unknown>): Record<string, unknown> {
+      async loader(_getAuth: () => Promise<import("@opencode-ai/sdk").Auth>) {
         return {};
       },
       methods: [
         {
           label: "Gemini OAuth",
           type: "oauth",
-          async authorize() {
+          async authorize(): Promise<AuthOAuthResult> {
             const { url, instructions, callback } = await startGeminiOAuth();
             return { url, instructions, method: "auto" as const, callback };
           },
         },
       ],
     },
-    async config(cfg: PluginConfig) {
-      const mcp = cfg.mcp ?? {}
-      if (Object.keys(mcp).length > 0 || cfg.mcp !== undefined) {
-        await syncMcpServers(mcp as Record<string, import("./mcp-adapter.js").OpenCodeMcpServer>)
+    async config(cfg: Config) {
+      const mcp = cfg.mcp ?? {};
+      if (Object.keys(mcp).length > 0) {
+        await syncMcpServers(mcp as Record<string, import("./mcp-adapter.js").OpenCodeMcpServer>);
       }
     },
   };
+
+  return hooks;
 };
 
 export default GeminiSubagentPlugin;
+export { GeminiSubagentPlugin };
